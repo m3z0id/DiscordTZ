@@ -87,12 +87,12 @@ async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_comma
 
 @mytimezone.command(name="set", description="Sets your timezone to the correct one.")
 @app_commands.describe(timezone="The timezone you are in.")
-@app_commands.autocomplete(timezone=getTimezones)
+@app_commands.choices(timezone=getTimezones)
 async def set(ctx: discord.Interaction, timezone: str) -> None:
     #cursor: mariadb.Cursor = conn.cursor(prepared=True)
     query: str = f"INSERT into {db.get("tableName")} (user, timezone) VALUES (%s, %s)"
 
-    data: tuple[int, str] = (ctx.user.id, timezone.value)
+    data: tuple[int, str] = (ctx.user.id, timezone)
 
     try:
         #cursor.execute(query, data)
