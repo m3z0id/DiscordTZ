@@ -11,6 +11,7 @@ client: commands.Bot = commands.Bot("tz!", help_command=None, intents=discord.In
 
 db: dict = config.get("mariadbDetails")
 
+"""
 conn: mariadb.Connection = mariadb.connect(
     database=db.get("database"),
     user=db.get("user"),
@@ -19,6 +20,7 @@ conn: mariadb.Connection = mariadb.connect(
     port=int(db.get("port")),
     autocommit=bool(db.get("autocommit"))
 )
+"""
 
 success: discord.Embed = discord.Embed(
     title="**Success!**",
@@ -57,33 +59,44 @@ async def on_ready() -> None:
         print(f"Exception occured: {e}")
         os._exit(1)
 
-async def getTimezones(ctx: discord.Interaction, current: str):
+async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_commands.Choice]:
     result: list[app_commands.Choice] = []
-    timezonesCopy = timezones
-    for timezone in timezones:
-        if(len(result) == 25): break
-        if(str(timezone.get("city")).startswith(current)): 
-            timezonesCopy.remove(timezone)
-            result.append(app_commands.Choice(name=f"{timezone.get("area")}/{timezone.get("city")}", value=f"{timezone.get("area")}/{timezone.get("city")}"))
-    else:
-        for timezone in timezonesCopy:
-            if(len(result) == 25): break
-            if(str(timezone.get("area")).startswith(current)): result.append(app_commands.Choice(name=f"{timezone.get("area")}/{timezone.get("city")}", value=f"{timezone.get("area")}/{timezone.get("city")}"))
+
+    cityMatches = [
+        app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}")
+        for tz in timezones
+        if str(tz.get("city", "")).startswith(current)
+    ]
+
+    areaMatches = [
+        app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}")
+        for tz in timezones
+        if str(tz.get("area", "")).startswith(current)
+    ]
+
+    for choice in cityMatches[:25]:
+        result.append(choice)
+
+    if len(result) < 25:
+        for choice in areaMatches:
+            if len(result) == 25:
+                break
+            result.append(choice)
 
     return result
 
 @mytimezone.command(name="set", description="Sets your timezone to the correct one.")
-@mytimezone.describe(timezone="The timezone you are in.")
-@mytimezone.choices(timezone=getTimezones)
-async def set(ctx: discord.Interaction, timezone: app_commands.Choice[str]) -> None:
-    cursor: mariadb.Cursor = conn.cursor(prepared=True)
+@app_commands.describe(timezone="The timezone you are in.")
+@app_commands.autocomplete(timezone=getTimezones)
+async def set(ctx: discord.Interaction, timezone: str) -> None:
+    #cursor: mariadb.Cursor = conn.cursor(prepared=True)
     query: str = f"INSERT into {db.get("tableName")} (user, timezone) VALUES (%s, %s)"
 
     data: tuple[int, str] = (ctx.user.id, timezone.value)
 
     try:
-        cursor.execute(query, data)
-        conn.commit()
+        #cursor.execute(query, data)
+        #conn.commit()
         print(f"Inserted {data} successfully!")
         successCpy = success
         successCpy.set_footer(ctx.user.name, ctx.user.avatar.url)
