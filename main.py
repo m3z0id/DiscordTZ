@@ -59,8 +59,8 @@ async def on_ready() -> None:
         print(f"Exception occured: {e}")
         os._exit(1)
 
-async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_commands.Choice]:
-    result: list[app_commands.Choice] = []
+async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    result: list[app_commands.Choice[str]] = []
 
     cityMatches = [
         app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}")
@@ -87,12 +87,12 @@ async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_comma
 
 @mytimezone.command(name="set", description="Sets your timezone to the correct one.")
 @app_commands.describe(timezone="The timezone you are in.")
-@app_commands.choices(timezone=getTimezones)
-async def set(ctx: discord.Interaction, timezone: str) -> None:
+@app_commands.autocomplete(timezone=getTimezones)
+async def set(ctx: discord.Interaction, timezone: app_commands.Choice[str]) -> None:
     #cursor: mariadb.Cursor = conn.cursor(prepared=True)
     query: str = f"INSERT into {db.get("tableName")} (user, timezone) VALUES (%s, %s)"
 
-    data: tuple[int, str] = (ctx.user.id, timezone)
+    data: tuple[int, str] = (ctx.user.id, timezone.value)
 
     try:
         #cursor.execute(query, data)
