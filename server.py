@@ -50,7 +50,7 @@ class GetRequest:
             message: str = "Not Found"
             code: int = 404
 
-        Server.sendResponse(key, this.writer, code, message)
+        await Server.sendResponse(key, this.writer, code, message)
 
 class RequestType(Enum):
     GET_REQUEST = GetRequest
