@@ -1,3 +1,5 @@
 discord
 mariadb
 datetime
+asyncio
+pycryptodome

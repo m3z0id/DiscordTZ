@@ -8,17 +8,17 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from Crypto.Util.Padding import unpad
 
-def decrypt(encrypted_data: bytes, key: bytes) -> str:
-        if not isinstance(encrypted_data, (bytes, bytearray)):
-            Logger.error("Encrypted data must be bytes or bytearray")
-            return
-    
-        iv = encrypted_data[:16]
-        data = bytearray(encrypted_data[16:])
+def decrypt(encrypted_data: bytes, key: bytes) -> str | None:
+    iv = encrypted_data[:16]
+    data = bytearray(encrypted_data[16:])
+
+    try:
         cipher = AES.new(key, AES.MODE_CBC, iv=iv)
-        decrypted_data = cipher.decrypt(data)
-        decrypted_data = unpad(decrypted_data, AES.block_size)
-        return decrypted_data.decode('utf-8').strip()
+        decryptedData = cipher.decrypt(data)
+        decryptedData = unpad(decryptedData, AES.block_size)
+        return decryptedData.decode('utf-8').strip()
+    except ValueError:
+        return None
 
 def encrypt(message: bytes, key: bytes) -> bytes:
     iv = os.urandom(16)
@@ -43,23 +43,14 @@ class GetRequest:
             this = None
     
     async def respond(this) -> str:
-        response: dict = {}
-        message: str | bool = this.database.get(this.userId)
-        if(isinstance(message, bool)):
-            response["message"] = "Failed"
-            response["code"] = 404
-        else:
-            response["message"] = message
-            response["code"] = 200    
-        
-        messageText = json.dumps(response)
-        Logger.log(f"Responding with {messageText}")
-        payload: bytes = encrypt(messageText.encode(), str(json.loads(open("config.json", "r").read())["server"]["aesKey"]).encode())
+        key: bytes = str(json.loads(open("config.json", "r").read())["server"]["aesKey"]).encode()
+        message: str | None = this.database.get(this.userId)
+        code: int = 200
+        if(message == None):
+            message: str = "Not Found"
+            code: int = 404
 
-        this.writer.write(payload)
-        await this.writer.drain()
-        this.writer.close()
-        await this.writer.wait_closed()
+        Server.sendResponse(key, this.writer, code, message)
 
 class RequestType(Enum):
     GET_REQUEST = GetRequest
@@ -73,6 +64,20 @@ class Server:
     def __init__(this, database: Database):
         this.database = database
         this.serverSettings = json.loads(open("config.json", "r").read())["server"]
+
+    @staticmethod
+    async def sendResponse(key: bytes, writer: asyncio.StreamWriter, code: int, msg: str) -> None:
+        message: dict[str: str, str: int] = {"message": msg, "code": code}
+        messageStr: str = json.dumps(message)
+        messageEnc: bytes = encrypt(messageStr.encode(), key)
+
+        Logger.log(f"Responding with {messageStr}")
+        writer.write(messageEnc)
+
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
         
     async def start(this):
         server = await asyncio.start_server(this.RequestDecoder, "0.0.0.0", int(this.serverSettings["port"]))
@@ -87,9 +92,21 @@ class Server:
         key: bytes = str(this.serverSettings['aesKey']).encode()
         msg: bytes = await client.read(4096)
 
-        data: str = decrypt(msg, key)
+        data: str | None = decrypt(msg, key)
+
+        if(data == None):
+            Logger.error(f"Failed to decrypt the message. {msg}")
+            await Server.sendResponse(key, writer, 400, "Bad Request")
+            return
+
         Logger.log(f"Got message {data}")
-        dct: dict = json.loads(data)
+        try:
+            dct: dict = json.loads(data)
+        except json.decoder.JSONDecodeError:
+            Logger.error(f"Received an invalid packet.")
+            await Server.sendResponse(key, writer, 400, "Bad Request")
+            return
+
 
         if("requestType" in dct and "data" in dct):
             name, member = str(dct["requestType"]).split(".")
@@ -97,6 +114,7 @@ class Server:
                 reqType: RequestType = getattr(RequestType, member)
             except AttributeError:
                 Logger.error(f"Received an invalid packet type. {dct["requestType"]}")
+                await Server.sendResponse(key, writer, 405, "Method Not Allowed")
                 return
             
             additionalData: dict = dct["data"]

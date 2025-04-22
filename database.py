@@ -34,7 +34,7 @@ class Database:
             Logger.error(f"Error while writing data to database: {e}")
             return False
         
-    def get(this, userId: int) -> str | bool:
+    def get(this, userId: int) -> str | None:
         conn: mariadb.Connection = this.conn
         cursor: mariadb.Cursor = conn.cursor(prepared=True)
         query: str = f"SELECT timezone from {this.tableName} WHERE user = %s"
@@ -53,7 +53,7 @@ class Database:
 
         except mariadb.Error as e:
             Logger.error(e)
-            return False
+            return None
 
     def defaultTz(this) -> str:
         temp: list[str] = os.readlink("/etc/localtime").split("/")

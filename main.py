@@ -1,8 +1,11 @@
 import discord
+from database import Database
 from discord import app_commands
 from discord.ext import commands
+from logger import Logger
+from server import Server
 import datetime
-import mariadb
+import asyncio
 import json
 import os
 
@@ -10,15 +13,7 @@ config: dict[str] = json.loads(open("config.json", "r").read())
 client: commands.Bot = commands.Bot("tz!", help_command=None, intents=discord.Intents.all())
 
 db: dict = config.get("mariadbDetails")
-
-conn: mariadb.Connection = mariadb.connect(
-    database=db.get("database"),
-    user=db.get("user"),
-    password=db.get("password"),
-    host=db.get("host"),
-    port=int(db.get("port")),
-    autocommit=bool(db.get("autocommit"))
-)
+database: Database = Database(db)
 
 success: discord.Embed = discord.Embed(
     title="**Success!**",
@@ -53,9 +48,9 @@ async def on_ready() -> None:
     try:
         client.tree.add_command(mytimezone)
         synced = await client.tree.sync()
-        print(f"Synced {len(synced)} commands!")
+        Logger.success(f"Synced {len(synced)} commands!")
     except Exception as e:
-        print(f"Exception occured: {e}")
+        Logger.error(e)
         os._exit(1)
 
 async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -88,9 +83,9 @@ async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_comma
 @app_commands.describe(timezone="The timezone you are in.")
 @app_commands.autocomplete(timezone=getTimezones)
 async def set(ctx: discord.Interaction, timezone: str) -> None:
-    nowtime: str = datetime.datetime.now().strftime("%d.%m.%y %H:%M:%S")
+
     if(timezone not in checkList):
-        print(f"[{nowtime}] ERROR: {ctx.user} tried to set their timezone to {timezone}.")
+        Logger.error(f"{ctx.user} tried to set their timezone to {timezone}.")
         failCpy = fail
         failCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
         failCpy.timestamp = datetime.datetime.now()
@@ -98,55 +93,39 @@ async def set(ctx: discord.Interaction, timezone: str) -> None:
         await ctx.response.send_message(embed=failCpy, ephemeral=True)
         return
 
-    cursor: mariadb.Cursor = conn.cursor(prepared=True)
-    query: str = f"INSERT into {db.get("tableName")} (user, timezone) VALUES (%s, %s) ON DUPLICATE KEY UPDATE timezone = %s"
-
-    data: tuple[int, str, str] = (ctx.user.id, timezone.replace(" ", "_"), timezone.replace(" ", "_"))
-
-    try:
-        cursor.execute(query, data)
-        conn.commit()
-        print(f"[{nowtime}] SUCCESS: {ctx.user} set their timezone to {timezone}!")
+    if(database.set(ctx.user.id, timezone)):
         successCpy = success
         successCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
         successCpy.timestamp = datetime.datetime.now()
-
+        Logger.success(f"{ctx.user} set their timezone to {timezone}!")
         await ctx.response.send_message(embed=successCpy, ephemeral=True)
-        return
-
-    except mariadb.Error as e: 
-        print(f"[{nowtime}] ERROR: {e}")
+    else:
         failCpy = fail
         failCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
         failCpy.timestamp = datetime.datetime.now()
 
         await ctx.response.send_message(embed=failCpy, ephemeral=True)
-        return
     
 @mytimezone.command(name="get", description="Shows you timezone you set.")
 async def get(ctx: discord.Interaction) -> None:
-    nowtime: str = datetime.datetime.now().strftime("%d.%m.%y %H:%M:%S")
+    res: str | bool = database.get(ctx.user.id)
 
-    cursor: mariadb.Cursor = conn.cursor(prepared=True)
-    query: str = f"SELECT timezone from {db.get("tableName")} WHERE user = %s"
-    data: list[int] = [ctx.user.id]
+    if(isinstance(res, bool)):
+        failCpy = fail
+        failCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
+        failCpy.timestamp = datetime.datetime.now()
 
-    try:
-        cursor.execute(query, data)
-        conn.commit()
+        await ctx.response.send_message(embed=failCpy, ephemeral=True)
 
-        result = cursor.fetchone()
-
-        if(result):
-            tz: str = str(result[0])
-        else:
-            temp: list[str] = os.readlink("/etc/localtime").split("/")
-            tz: str = f"{temp[-2]}/{temp[-1]}"
-
-        await ctx.response.send_message(f"Your timezone is {tz.replace("_", " ")}", ephemeral=True)
-
-    except mariadb.Error as e:
-        print(f"[{nowtime}] ERROR: {e}")
+    else:
+        await ctx.response.send_message(f"Your timezone is {res.replace("_", " ")}", ephemeral=True) 
 
 
-client.run(config["token"])
+async def main():
+    serverStarter = asyncio.create_task(Server(database).start())
+    async with client:
+        await client.start(config["token"])
+
+    await serverStarter
+
+asyncio.run(main())
