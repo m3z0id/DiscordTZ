@@ -28,42 +28,155 @@ def encrypt(message: bytes, key: bytes) -> bytes:
     encryptedMessage = cipher.encrypt(paddedMessage)
     return iv + encryptedMessage
 
-class GetRequest:
-    userId: int
+class EventHandler:
+    def __init__(self):
+        self.init_callbacks = []
+
+    def onError(self, callback):
+        self.init_callbacks.append(callback)
+
+    def trigger(self, instance):
+        for callback in self.init_callbacks:
+            asyncio.create_task(callback(instance))
+
+class SimpleRequest:
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
     database: Database
-    def __init__(this, data: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database):
+    data: dict
+    key: bytes
+    response: int = 0
+
+    eventHandler: EventHandler = EventHandler()
+
+    def __init__(this, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database, data: dict):
         this.reader = reader
         this.writer = writer
-        this.userId = int(data.get("userId"))
         this.database = database
-        if(this.userId == None):
-            Logger.error(f"Invalid GetRequest. Received data: {data}")
-            this = None
-    
-    async def respond(this) -> str:
-        key: bytes = str(json.loads(open("config.json", "r").read())["server"]["aesKey"]).encode()
-        message: str | None = this.database.get(this.userId)
-        code: int = 200
-        if(message == None):
-            message: str = "Not Found"
-            code: int = 404
+        this.data = data
+        this.key = str(json.loads(open("config.json", "r").read())["server"]["aesKey"]).encode()
 
-        await Server.sendResponse(key, this.writer, code, message)
+    async def respond(this):
+        pass
+
+class TimeZoneRequest(SimpleRequest):
+    userId: int | None
+
+    def __init__(this, data: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database):
+        super().__init__(reader, writer, database, data)
+        this.userId = None
+        this.userId = int(data.get("userId")) if str(data.get("userId")).isnumeric() else None
+    
+    async def respond(this) -> None:
+        if(this.userId is None):
+            await Server.badRequest(this)
+            return
+
+        message: str | None = this.database.getTimeZone(this.userId)
+        this.response = 200
+        if(message is None or message == ""):
+            await Server.notFound(this)
+            return
+
+        await Server.sendResponse(this.key, this.writer, this.response, message)
+
+class AliasFromUserRequest(SimpleRequest):
+    userId: int | None
+
+    def __init__(this, data: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database):
+        super().__init__(reader, writer, database, data)
+        this.userId = int(data.get("userId")) if str(data.get("userId")).isnumeric() else None
+
+    async def respond(this) -> None:
+        if(this.userId is None):
+            await Server.badRequest(this)
+            return
+
+        message: str | None = this.database.getAlias(this.userId)
+        this.response = 200
+        if (message is None or message == ""):
+            await Server.notFound(this)
+            return
+
+        await Server.sendResponse(this.key, this.writer, this.response, message)
+
+class UserFromAliasRequest(SimpleRequest):
+    alias: str
+
+    def __init__(this, data: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database):
+        super().__init__(reader, writer, database, data)
+        this.alias = str(data.get("alias"))
+
+    async def respond(this) -> None:
+        message: str | None = this.database.getUserByAlias(this.alias)
+        this.response = 200
+        if (message is None or message == ""):
+            await Server.notFound(this)
+            return
+
+        await Server.sendResponse(this.key, this.writer, this.response, message)
+
+class TimeZoneFromAliasRequest(SimpleRequest):
+    alias: str
+
+    def __init__(this, data: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, database: Database):
+        super().__init__(reader, writer, database, data)
+        this.alias = str(data.get("alias"))
+
+    async def respond(this) -> None:
+        message: str | None = this.database.getTimeZoneByAlias(this.alias)
+        this.response = 200
+        if (message is None or message == ""):
+            await Server.notFound(this)
+            return
+
+        await Server.sendResponse(this.key, this.writer, this.response, message)
 
 class RequestType(Enum):
-    GET_REQUEST = GetRequest
+    TIMEZONE_REQUEST = TimeZoneRequest
+    ALIAS_REQUEST = AliasFromUserRequest
+    USER_FROM_ALIAS_REQUEST = UserFromAliasRequest
+    TIMEZONE_FROM_ALIAS_REQUEST = TimeZoneFromAliasRequest
 
     def __call__(this, *args, **kwargs):
         return this.value(*args, **kwargs)
 
+    @classmethod
+    def get(cls, value, default=None):
+        for member in cls:
+            if member.value == value or member.value.__name__ == value:
+                return member
+        return default
+
 class Server:
     serverSettings: dict
     database: Database
+    eventHandler: EventHandler = EventHandler()
+    
     def __init__(this, database: Database):
         this.database = database
         this.serverSettings = json.loads(open("config.json", "r").read())["server"]
+
+    @staticmethod
+    async def badRequest(request: SimpleRequest) -> None:
+        Logger.error(f"Invalid {request.data["requestType"] if request.__class__.__name__ == "SimpleRequest" else RequestType.get(request.__class__.__name__)}. Received data: {request.data["data"] if request.__class__.__name__ == "SimpleRequest" else request.data}")
+        request.response = 400
+        request.eventHandler.trigger(request)
+        await Server.sendResponse(request.key, request.writer, 400, "Bad Request")
+
+    @staticmethod
+    async def notFound(request: SimpleRequest) -> None:
+        Logger.error(f"{request.data["data"] if request.__class__.__name__ == "SimpleRequest" else request.data} in {request.data["requestType"] if request.__class__.__name__ == "SimpleRequest" else RequestType.get(request)} not found.")
+        request.response = 404
+        request.eventHandler.trigger(request)
+        await Server.sendResponse(request.key, request.writer, 404, "Not Found")
+
+    @staticmethod
+    async def badMethod(request: SimpleRequest) -> None:
+        Logger.error(f"Invalid method {request.data["requestType"] if request.__class__.__name__ == "SimpleRequest" else RequestType.get(request)}. Received data: {request.data["data"] if request.__class__.__name__ == "SimpleRequest" else request.data}")
+        request.response = 405
+        request.eventHandler.trigger(request)
+        await Server.sendResponse(request.key, request.writer, 405, "Method Not Allowed")
 
     @staticmethod
     async def sendResponse(key: bytes, writer: asyncio.StreamWriter, code: int, msg: str) -> None:
@@ -78,12 +191,11 @@ class Server:
         writer.close()
         await writer.wait_closed()
 
-        
     async def start(this):
         server = await asyncio.start_server(this.RequestDecoder, "0.0.0.0", int(this.serverSettings["port"]))
         try:
             async with server:
-                Logger.log("Server running!")
+                Logger.log("Server create_taskning!")
                 await server.serve_forever()
         except asyncio.CancelledError:
             Logger.log("Server shutting down!")
@@ -94,7 +206,7 @@ class Server:
 
         data: str | None = decrypt(msg, key)
 
-        if(data == None):
+        if(data is None):
             Logger.error(f"Failed to decrypt the message. {msg}")
             await Server.sendResponse(key, writer, 400, "Bad Request")
             return
@@ -107,15 +219,17 @@ class Server:
             await Server.sendResponse(key, writer, 400, "Bad Request")
             return
 
-
         if("requestType" in dct and "data" in dct):
             name, member = str(dct["requestType"]).split(".")
             try:
                 reqType: RequestType = getattr(RequestType, member)
             except AttributeError:
-                Logger.error(f"Received an invalid packet type. {dct["requestType"]}")
-                await Server.sendResponse(key, writer, 405, "Method Not Allowed")
+                req = SimpleRequest(client, writer, this.database, dct)
+                await Server.badMethod(req)
                 return
             
             additionalData: dict = dct["data"]
-            await reqType(additionalData, client, writer, this.database).respond()
+
+            request: SimpleRequest = reqType(additionalData, client, writer, this.database)
+            if(request is not None):
+                await request.respond()

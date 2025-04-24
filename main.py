@@ -3,7 +3,7 @@ from database import Database
 from discord import app_commands
 from discord.ext import commands
 from logger import Logger
-from server import Server
+from server import Server, SimpleRequest, RequestType
 import datetime
 import asyncio
 import json
@@ -82,7 +82,9 @@ async def getTimezones(ctx: discord.Interaction, current: str) -> list[app_comma
 @mytimezone.command(name="set", description="Sets your timezone to the correct one.")
 @app_commands.describe(timezone="The timezone you are in.")
 @app_commands.autocomplete(timezone=getTimezones)
-async def set(ctx: discord.Interaction, timezone: str) -> None:
+async def set(ctx: discord.Interaction, timezone: str, alias: str = None) -> None:
+    if(alias == None):
+        alias = ctx.user.name
 
     if(timezone not in checkList):
         Logger.error(f"{ctx.user} tried to set their timezone to {timezone}.")
@@ -93,7 +95,7 @@ async def set(ctx: discord.Interaction, timezone: str) -> None:
         await ctx.response.send_message(embed=failCpy, ephemeral=True)
         return
 
-    if(database.set(ctx.user.id, timezone)):
+    if(database.set(ctx.user.id, timezone, alias)):
         successCpy = success
         successCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
         successCpy.timestamp = datetime.datetime.now()
@@ -108,18 +110,55 @@ async def set(ctx: discord.Interaction, timezone: str) -> None:
     
 @mytimezone.command(name="get", description="Shows you timezone you set.")
 async def get(ctx: discord.Interaction) -> None:
-    res: str | bool = database.get(ctx.user.id)
+    res: str | None = database.get(ctx.user.id)
 
-    if(isinstance(res, bool)):
+    if(res == None):
         failCpy = fail
         failCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
         failCpy.timestamp = datetime.datetime.now()
 
         await ctx.response.send_message(embed=failCpy, ephemeral=True)
-
     else:
-        await ctx.response.send_message(f"Your timezone is {res.replace("_", " ")}", ephemeral=True) 
+        await ctx.response.send_message(f"Your timezone is {res.replace("_", " ")}", ephemeral=True)
 
+@mytimezone.command(name="alias", description="Alias when people want to know your time")
+@app_commands.describe(alias="Alias with which other people will get your time")
+async def alias(ctx: discord.Interaction, alias: str) -> None:
+    if(" " in alias):
+        ctx.response.send_message(f"Aliases can't contain spaces!", ephemeral=True)
+        return
+
+    if(database.set(ctx.user.id, alias)):
+        successCpy = success
+        successCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
+        successCpy.timestamp = datetime.datetime.now()
+
+        await ctx.response.send_message(embed=successCpy, ephemeral=True)
+    else:
+        failCpy = fail
+        failCpy.set_footer(text=ctx.user.name, icon_url=ctx.user.avatar.url)
+        failCpy.timestamp = datetime.datetime.now()
+        failCpy.description = "A user already has this alias!"
+
+        await ctx.response.send_message(embed=failCpy, ephemeral=True)
+
+@SimpleRequest.eventHandler.onError
+async def onError(request: SimpleRequest):
+    config: dict = json.loads(open("config.json", "r").read())
+    config = config["packetLogs"]
+
+    embed: discord.Embed = discord.Embed()
+    embed.title = "**Error**"
+    embed.colour = discord.Color.red()
+    embed.description = f"**Packet**: {request.data["requestType"] if request.__class__.__name__ == "SimpleRequest" else RequestType.get(request.__class__.__name__)}\n**Response**: {request.response}"
+    embed.add_field(name="Request Data", value=f"```{request.data["data"] if request.__class__.__name__ == "SimpleRequest" else request.data}```", inline=False)
+
+    embed.timestamp = datetime.datetime.now()
+
+    whoToPing: discord.User = await client.fetch_user(config["whoToPing"])
+
+    channel: discord.TextChannel = await client.fetch_channel(config["channelId"])
+    await channel.send(whoToPing.mention, embed=embed)
 
 async def main():
     serverStarter = asyncio.create_task(Server(database).start())
