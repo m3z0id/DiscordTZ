@@ -18,7 +18,6 @@ class UDPClient(Client):
 
 
 class UDPProtocol(asyncio.DatagramProtocol):
-    PROCESS_TASK: Final[asyncio.Task[None]]
     _STOP_EVENT: Final[asyncio.Event]
 
     def __init__(this, server: "APIServer") -> None:  # noqa: ANN001
@@ -26,38 +25,21 @@ class UDPProtocol(asyncio.DatagramProtocol):
         this.transport: asyncio.transports.DatagramTransport | None = None
         this.requestQueue: Queue[tuple[bytes, UDPClient]] = Queue()
 
-        this.PROCESS_TASK = asyncio.create_task(this.processQueue())
         this._STOP_EVENT = asyncio.Event()
 
     def connection_made(this, transport: asyncio.transports.DatagramTransport) -> None:
         this.transport = transport
 
     def datagram_received(this, data: bytes, addr: tuple[str, int]) -> None:
+        client: UDPClient = UDPClient(this.transport, addr, this.server.aesKey, this.server)
         if not data.startswith(b"tz"):
+            asyncio.create_task(this.server.respondToInvalid(data, client))
             return
 
-        this.requestQueue.put_nowait((data, UDPClient(this.transport, addr, this.server.aesKey, this.server)))
+        asyncio.create_task(this.server.processRequest(data, client))
 
     def close(this):
         this.transport.close()
         this.requestQueue.empty()
         with contextlib.suppress(asyncio.CancelledError, TypeError):
             this._STOP_EVENT.set()
-            this.PROCESS_TASK.done()
-
-    async def processQueue(this):
-        while True:
-            done, pending = await asyncio.wait(
-                {
-                    asyncio.create_task(this.requestQueue.get()),
-                    asyncio.create_task(this._STOP_EVENT.wait()),
-                },
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            if this._STOP_EVENT.is_set():
-                break
-
-            task = done.pop()
-            data, client = task.result()
-            await this.server.processRequest(data, client)

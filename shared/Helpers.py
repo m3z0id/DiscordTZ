@@ -92,7 +92,7 @@ class Helpers:
         re.VERBOSE,
     )
     HOSTS_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b((?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[0-1]))(?:\.\d{1,3}){3})\s+(\S+)", re.IGNORECASE)
-    UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+    UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
     @staticmethod
     async def getHosts() -> dict[str, str]:

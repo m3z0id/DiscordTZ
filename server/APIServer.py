@@ -1,7 +1,7 @@
 import asyncio
 import json
 import struct
-from asyncio import Server
+from asyncio import Server, IncompleteReadError
 from json import JSONDecodeError
 from typing import Final
 
@@ -70,10 +70,12 @@ class APIServer:
         this._STOP_EVENT.set()
 
     async def TCPReceived(this, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
         try:
             magic = await reader.readexactly(2)
             if magic != b"tz":
-                writer.close()
+                rest = magic + await reader.read(65535)
+                await this.respondToInvalid(rest, client)
                 return
 
             headerLen = int.from_bytes(await reader.readexactly(1), "big")
@@ -89,12 +91,12 @@ class APIServer:
             body = await reader.readexactly(bodyLen)
 
             msg = header + body
-        except Exception as e:  # noqa: BLE001
-            Logger.error(f"Error reading from client: {e}")
-            return
 
-        client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
-        await this.processRequest(msg, client)
+            client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
+            await this.processRequest(msg, client)
+        except IncompleteReadError as e:
+            Logger.error(f"Didn't get enough bytes to check for header! {e!s}")
+            writer.close()
 
     async def parsePacketInfo(this, msg: bytes) -> APIPayload | None:
         tLetter, zLetter, *payload = struct.unpack(">BBBBBH", msg[0:7])

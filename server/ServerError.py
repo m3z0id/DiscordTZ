@@ -16,3 +16,4 @@ class ErrorCode(metaclass=DeepCopier):
     BAD_METHOD = Response(405, "Bad Method")
     INTERNAL_SERVER_ERROR = Response(500, "Internal Server Error")
     CONFLICT = Response(409, "Conflict")
+    BAD_GEOLOC = Response(-1, "Bad Geolocation")
