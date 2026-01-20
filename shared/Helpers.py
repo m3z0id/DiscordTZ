@@ -7,6 +7,7 @@ import os
 import random
 import re
 import string
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import ParamSpec, TypeVar, Callable, Coroutine, Any, NewType
@@ -48,9 +49,6 @@ class Helpers:
     HOSTNAME_FILE: Final[Path] = Path("/etc/hostname")
     BMPGEN_EXEC_FILE: Final[Path] = Path("./execs/BMPGen")
     MAGICK_EXEC_FILE: Final[Path] = Path("/usr/bin/magick")
-
-    OUTPUT_BMP_FILE: Final[Path] = Path("output.bmp")
-    OUTPUT_PNG_FILE: Final[Path] = Path("output.png")
 
     UUIDStr = NewType("UUIDStr", str)
     IPv4Str = NewType("IPv4Str", str)
@@ -125,43 +123,10 @@ class Helpers:
 
     @staticmethod
     async def isLocalSubnet(ip: str) -> bool:
-        ipRegex = re.compile(
-            r"""
-                    ^(?:
-                        # Private ranges
-                        10(?:\.\d{1,3}){3} |                            # 10.0.0.0/8
-                        172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2} |    # 172.16.0.0 - 172.31.255.255
-                        192\.168(?:\.\d{1,3}){2} |                     # 192.168.0.0/16
-    
-                        # Loopback
-                        127(?:\.\d{1,3}){3} |                          # 127.0.0.0/8
-    
-                        # Link-local
-                        169\.254(?:\.\d{1,3}){2} |                     # 169.254.0.0/16
-    
-                        # Carrier-grade NAT
-                        100\.(?:6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])(?:\.\d{1,3}){2} |  # 100.64.0.0/10
-    
-                        # Reserved for documentation
-                        192\.0\.2\.\d{1,3} |                       # 192.0.2.0/24
-                        198\.51\.100\.\d{1,3} |                    # 198.51.100.0/24
-                        203\.0\.113\.\d{1,3} |                     # 203.0.113.0/24
-    
-                        # Reserved for future use
-                        240(?:\.\d{1,3}){3} |                          # 240.0.0.0/4
-                        255\.255\.255\.255 |                           # Broadcast
-    
-                        # IETF Protocol Assignments
-                        192\.0\.0\.\d{1,3} |                       # 192.0.0.0/24
-    
-                        # Benchmarking
-                        198\.18(?:\.\d{1,3}){2} |                      # 198.18.0.0/15
-                        198\.19(?:\.\d{1,3}){2}
-                    )$
-                    """,
-            re.VERBOSE,
-        )
-        return bool(ipRegex.match(ip))
+        try:
+            return ipaddress.ip_address(ip).is_private
+        except ValueError:
+            return False
 
     @staticmethod
     def isIP(ip: str) -> TypeIs[IPv4Str]:
@@ -180,43 +145,53 @@ class Helpers:
         return "".join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
     @staticmethod
-    @cleanupAfter(OUTPUT_BMP_FILE, OUTPUT_PNG_FILE)
     async def generateImage(r: str, g: str, b: str) -> tuple[bool, BytesIO]:
         if not Helpers.BMPGEN_EXEC_FILE.is_file() or not Helpers.MAGICK_EXEC_FILE.is_file():
             Logger.error("BMPGen or ImageMagick is not present!")
             return False, BytesIO(b"")
 
-        bmpGen = await asyncio.create_subprocess_exec(
-            Helpers.BMPGEN_EXEC_FILE.absolute(), "-r", f"{r}", "-g", f"{g}", "-b", f"{b}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await bmpGen.communicate()
+        with tempfile.TemporaryDirectory() as tempDir:
+            tempPath = Path(tempDir)
+            
+            bmpGen = await asyncio.create_subprocess_exec(
+                Helpers.BMPGEN_EXEC_FILE.absolute(), "-r", f"{r}", "-g", f"{g}", "-b", f"{b}", 
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=tempPath
+            )
+            stdout, stderr = await bmpGen.communicate()
 
-        if bmpGen.returncode != 0:
-            Logger.error(f"There was an error generating BMP image. Return code: {bmpGen.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
-            Logger.error(f"Red: {r}")
-            Logger.error(f"Green: {g}")
-            Logger.error(f"Blue: {b}")
+            if bmpGen.returncode != 0:
+                Logger.error(f"There was an error generating BMP image. Return code: {bmpGen.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
+                Logger.error(f"Red: {r}")
+                Logger.error(f"Green: {g}")
+                Logger.error(f"Blue: {b}")
+                return False, BytesIO(b"")
+
+            magick = await asyncio.create_subprocess_exec(
+                Helpers.MAGICK_EXEC_FILE.absolute(),
+                "output.bmp",
+                "-define",
+                "png:compression-level=9",
+                "-define",
+                "png:compression-strategy=1",
+                "output.png",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=tempPath
+            )
+            stdout, stderr = await magick.communicate()
+
+            if magick.returncode != 0:
+                Logger.error(f"There was an error with conversion from BMP to PNG. Return code: {magick.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
+                return False, BytesIO(b"")
+
+            outputPng = tempPath / "output.png"
+            if outputPng.exists():
+                with outputPng.open("rb") as f:
+                    return True, BytesIO(f.read())
+            
             return False, BytesIO(b"")
 
-        magick = await asyncio.create_subprocess_exec(
-            Helpers.MAGICK_EXEC_FILE.absolute(),
-            "output.bmp",
-            "-define",
-            "png:compression-level=9",
-            "-define",
-            "png:compression-strategy=1",
-            "output.png",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await magick.communicate()
-
-        if magick.returncode != 0:
-            Logger.error(f"There was an error with conversion from BMP to PNG. Return code: {magick.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
-            return False, BytesIO(b"")
-
-        with Helpers.OUTPUT_PNG_FILE.open("rb") as f:
-            return True, BytesIO(f.read())
 
     @staticmethod
     def AESCBCDecrypt(msg: bytes, key: bytes) -> bytes | None:

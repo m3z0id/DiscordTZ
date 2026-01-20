@@ -26,7 +26,7 @@ class Chroma(commands.Cog):
 
     TEMP_IMAGES_PATH: Final[Path] = Path("temp/")
 
-    COMMAND_LOCK: Final[asyncio.Lock] = asyncio.Lock()
+    COMMAND_LOCK: Final[asyncio.Semaphore] = asyncio.Semaphore(3)
 
     outputtedImages: set[Path] = set()
 
