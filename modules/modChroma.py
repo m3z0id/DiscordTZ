@@ -3,7 +3,7 @@ import io
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Final, ByteString
+from typing import Final
 
 import discord
 from PIL import Image
@@ -18,7 +18,7 @@ class Chroma(commands.Cog):
     client: TZBot
 
     CHROMA_EXEC: Final[Path] = Path("./execs/chroma")
-    VALID_COLOR_SPACES: Final[list[str]] = {"rgb", "hsl", "oklab", "oklch", "okhsl"}
+    VALID_COLOR_SPACES: Final[set[str]] = {"rgb", "hsl", "oklab", "oklch", "okhsl"}
 
     EMOJI_PATTERN: Final[re.Pattern[str]] = re.compile("<:[a-zA-Z0-9_-]{2,32}:(\\d{18,20})>")
     URL_REGEX: Final[re.Pattern[str]] = re.compile(
@@ -63,13 +63,13 @@ class Chroma(commands.Cog):
 
         return file
 
-    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, ByteString]]:
-        images: set[tuple[str, ByteString]] = {(attachment.content_type, await attachment.read()) for attachment in
+    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
+        images: set[tuple[str, bytes]] = {(attachment.content_type, await attachment.read()) for attachment in
                                                msg.attachments if attachment.content_type in this.client.IMAGE_CONTENT_TYPES}
         return images
 
-    async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, ByteString]]:
-        images: set[tuple[str, ByteString]] = set()
+    async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, bytes]]:
+        images: set[tuple[str, bytes]] = set()
         for match in re.finditer(this.URL_REGEX, msg.content):
             url = match.group(0)
             response = await this.client.downloadFile(url, this.client.IMAGE_CONTENT_TYPES)
@@ -77,8 +77,8 @@ class Chroma(commands.Cog):
 
         return images
 
-    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[tuple[str, ByteString]]:
-        images: set[tuple[str, ByteString]] = set()
+    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[tuple[str, bytes]]:
+        images: set[tuple[str, bytes]] = set()
         if len(msg.embeds) > 0:
             for embed in msg.embeds:
                 if embed.image:
@@ -91,8 +91,8 @@ class Chroma(commands.Cog):
 
         return images
 
-    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, ByteString]]:
-        images: set[tuple[str, ByteString]] = set()
+    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
+        images: set[tuple[str, bytes]] = set()
 
         for match in re.finditer(this.EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
@@ -122,7 +122,7 @@ class Chroma(commands.Cog):
             return False
 
         await this.COMMAND_LOCK.acquire()
-        imagesToProcess: set[tuple[str, ByteString]] = set()
+        imagesToProcess: set[tuple[str, bytes]] = set()
 
         if ctx.message.attachments:
             imagesToProcess.update(await this.getImageAttachmentsFromMessage(ctx.message))

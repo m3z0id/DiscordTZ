@@ -16,7 +16,7 @@ class Help(commands.Cog):
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-    async def commandAutocomplete(this, ctx: discord.AutocompleteContext = None) -> list[str]:
+    async def commandAutocomplete(this, ctx: discord.AutocompleteContext | None = None) -> list[str]:
         if not ctx:
             return [cmd.name for cmd in this.client.loadedCommands]
         else:

@@ -18,7 +18,7 @@ from typing import ParamSpec, TypeVar, Callable, Coroutine, Any
 P = ParamSpec("P")
 R = TypeVar("R")
 
-def collectCommandStats(func: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Coroutine[Any, Any, R]]:
+def collectCommandStats(func: Callable[P, Coroutine[Any, Any, bool]]) -> Callable[P, Coroutine[Any, Any, bool]]:
     if not callable(func) or not inspect.iscoroutinefunction(func):
         raise RuntimeError(f"{func.__name__} is not compatible!")
 
