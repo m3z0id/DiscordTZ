@@ -8,6 +8,7 @@ from discord.ext import commands
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
 from shared.Helpers import Helpers
+from shell.Logger import Logger
 
 
 class ImageGen(commands.Cog):
@@ -16,6 +17,11 @@ class ImageGen(commands.Cog):
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
+
+        if not Helpers.BMPGEN_EXEC_FILE.is_file():
+            Logger.warning(f"BMPGen executable not found at {Helpers.BMPGEN_EXEC_FILE}")
+        if not Helpers.MAGICK_EXEC_FILE.is_file():
+            Logger.warning(f"ImageMagick executable not found at {Helpers.MAGICK_EXEC_FILE}")
 
         if not this.COLORLIST_FILE.is_file():
             this.colorSet = set()
@@ -50,6 +56,9 @@ class ImageGen(commands.Cog):
     @commands.cooldown(1, 3, commands.BucketType.user)
     @collectCommandStats
     async def color(this, ctx: discord.ApplicationContext) -> bool:
+        if not (Helpers.BMPGEN_EXEC_FILE.is_file() and Helpers.MAGICK_EXEC_FILE.is_file()):
+            await ctx.respond("This feature is disabled.")
+
         color: tuple[int, int, int] = (rand.randint(0, 255), rand.randint(0, 255), rand.randint(0, 255))
         fileOutput = color[0].to_bytes(1, byteorder="little") + color[1].to_bytes(1, byteorder="little") + color[2].to_bytes(1, byteorder="little")
 

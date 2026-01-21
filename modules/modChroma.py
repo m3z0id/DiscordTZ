@@ -33,6 +33,9 @@ class Chroma(commands.Cog):
     def __init__(this, client: TZBot):
         this.client = client
 
+        if not Chroma.CHROMA_EXEC.is_file():
+            Logger.warning(f"Chroma executable not found at {Chroma.CHROMA_EXEC}")
+
     async def cleanup(this):
         for _ in this.outputtedImages:
             _.unlink()
@@ -107,6 +110,9 @@ class Chroma(commands.Cog):
     async def chroma(this, ctx: bridge.BridgeContext, colorspace: bridge.BridgeOption(str, f"Filter's colorspace ({", ".join(VALID_COLOR_SPACES)})", choices=VALID_COLOR_SPACES), modifications: bridge.BridgeOption(str, f"The filter itself (format: <channel>:(modifier)<value|channel>))")) -> bool:
         if not isinstance(ctx, bridge.BridgeExtContext):
             await ctx.respond("Slash version isn't implemented yet. Please, use the prefixed version instead.", ephemeral=True)
+
+        if not Chroma.CHROMA_EXEC.is_file():
+            await ctx.respond("This feature is disabled.")
 
         await ctx.defer()
         if this.COMMAND_LOCK.locked():
