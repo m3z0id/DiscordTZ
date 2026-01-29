@@ -7,7 +7,6 @@ from geoip2 import errors  # noqa: F401
 from geoip2.models import City
 
 from server.Api import ApiKey, ApiPermissions
-from server.ServerError import ErrorCode
 from server.protocol.APIPayload import PacketFlags
 from server.protocol.Client import Client
 from server.protocol.Response import Response
@@ -16,10 +15,39 @@ from shared.Helpers import Helpers
 from shell.Logger import Logger
 
 
-from typing import ParamSpec, TypeVar, Callable, Coroutine, Any
+from typing import ParamSpec, TypeVar, Callable, Coroutine, Any, TypedDict, NotRequired, override, TYPE_CHECKING, ReadOnly
+
+if TYPE_CHECKING:
+    from modules.TZBot import TZBot
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# 1. Header Definition
+class RequestHeaders(TypedDict):
+    # 'NotRequired' signals keys that might be missing in raw JSON
+    apiKey: NotRequired[ReadOnly[str]]
+
+# 2. Payload Definitions
+class BaseData(TypedDict):
+    # Used for error messaging
+    message: NotRequired[str]
+
+class UserIdData(TypedDict):
+    userId: int | str
+
+class UUIDData(TypedDict):
+    uuid: str
+
+class LinkPostData(UUIDData):
+    timezone: str
+
+class IPData(TypedDict):
+    ip: str
+
+# 3. Modern Union Type
+type RequestDataPayload = BaseData | UserIdData | UUIDData | LinkPostData | IPData
+
 
 def autoRespond(func: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Coroutine[Any, Any, R]]:
     async def wrapper(this, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -31,10 +59,10 @@ def autoRespond(func: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Corout
         return result
     return wrapper
 
-class SimpleRequest:
+class SimpleRequest[T: RequestDataPayload]:
     client: Client
-    headers: dict
-    data: dict
+    headers: RequestHeaders
+    data: T
     response: Response | None = None
     city: City | None
     protocol: str
@@ -43,7 +71,7 @@ class SimpleRequest:
     def packetNameStringRepr(this) -> str:
         return "INVALID"
 
-    def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
+    def __init__(this, client: Client, headers: RequestHeaders, data: T, tzBot: "TZBot") -> None:
         this.client = client
         this.data = data
         this.headers = headers
@@ -55,6 +83,9 @@ class SimpleRequest:
         except geoip2.errors.AddressNotFoundError:
             this.city = None
 
+    def safe_get(this, key: str, default: any = None) -> any:
+        """Helper to safely access data that Type Checker assumes exists but Runtime might not."""
+        return this.data.get(key, default)
 
     @autoRespond
     async def process(this) -> None:
@@ -69,7 +100,7 @@ class SimpleRequest:
         return f"{this.__class__.__name__}({this.protocol}, {this.client.ip}, {this.headers}, {this.data})"
 
 
-class PartiallyEncryptedRequest(SimpleRequest):
+class PartiallyEncryptedRequest[T: RequestDataPayload](SimpleRequest[T]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot)
 
@@ -82,7 +113,7 @@ class PartiallyEncryptedRequest(SimpleRequest):
                     this.response.message = "Bad Request, Unencrypted"
 
 
-class EncryptedRequest(SimpleRequest):
+class EncryptedRequest[T: RequestDataPayload](SimpleRequest[T]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot)
 
@@ -94,7 +125,7 @@ class EncryptedRequest(SimpleRequest):
                 this.response.message = "Bad Request, Unencrypted"
 
 
-class APIRequest(PartiallyEncryptedRequest):
+class APIRequest[T: RequestDataPayload](PartiallyEncryptedRequest[T]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot", *requiredPerms: ApiPermissions) -> None:
         super().__init__(client, headers, data, tzBot)
         this.requiredPerms = requiredPerms
@@ -120,10 +151,12 @@ class APIRequest(PartiallyEncryptedRequest):
                 return
 
 
-class UserIdRequest(APIRequest):
+class UserIdRequest(APIRequest[UserIdData]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot", *requiredPerms: ApiPermissions) -> None:
         super().__init__(client, headers, data, tzBot, *requiredPerms)
-        this.userId = int(data.get("userId")) if str(data.get("userId")).isnumeric() else None
+        # Static Analysis now knows self.data has 'userId'
+        # Runtime safety: Handle cases where key is missing if JSON was bad
+        this.userId = int(this.data.get("userId")) if str(this.data.get("userId")).isnumeric() else None
 
     async def process(this) -> None:
         await super().process()
@@ -132,10 +165,10 @@ class UserIdRequest(APIRequest):
                 Logger.log(f"Response: {this.response}, User ID: {this.userId}")
                 this.response = ErrorCode.BAD_REQUEST
 
-class UUIDRequest(APIRequest):
+class UUIDRequest(APIRequest[UUIDData]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot", *requiredPerms: ApiPermissions) -> None:
         super().__init__(client, headers, data, tzBot, *requiredPerms)
-        this.uuid = data.get("uuid")
+        this.uuid = this.data.get("uuid")
 
     async def process(this) -> None:
         if (not this.response and this.uuid is None) or not Helpers.isUUID(this.uuid):

@@ -8,6 +8,7 @@ import discord
 from server.ServerError import ErrorCode
 from server.protocol.APIPayload import PacketFlags
 from server.requests.AbstractRequests import SimpleRequest
+from server.requests.Requests import PingRequest, TimeZoneFromIPRequest, UserIdUUIDLinkPost
 from shared.Helpers import Helpers
 
 
@@ -22,7 +23,7 @@ class ServerLogger:
         this.loggingEnabled = enabled
 
     async def sendLogEmbed(this, request: SimpleRequest) -> None:
-        if request.__class__.__name__ in {"PingRequest"}:
+        if isinstance(request, PingRequest):
             return
 
         embed: discord.Embed = discord.Embed()
@@ -33,10 +34,10 @@ class ServerLogger:
         if warning:
             request.response = None
 
-        if not warning and request.__class__.__name__ in {"TimeZoneFromIPRequest"}:
+        if not warning and isinstance(request, TimeZoneFromIPRequest):
             request.data["ip"] = "<redacted>"
 
-        if not warning and request.__class__.__name__ in {"UserIdUUIDLinkPost"} and request.response.code == ErrorCode.OK.code:
+        if not warning and isinstance(request, UserIdUUIDLinkPost) and request.response.code == ErrorCode.OK.code:
             request.response.message = "<redacted>"
 
         if len(str(request.data)) < this.MAX_DATA_EMBED_LEN:

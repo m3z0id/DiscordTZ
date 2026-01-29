@@ -17,7 +17,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from typing_extensions import Final
-from typing_extensions import TypeIs
+from typing import TypeIs
 
 from shell.Logger import Logger
 
@@ -134,7 +134,9 @@ class Helpers:
             return False
 
     @staticmethod
-    def isUUID(uniqueId: str) -> TypeIs[UUIDStr]:
+    def isUUID(uniqueId: object) -> TypeIs[UUIDStr]:
+        if not isinstance(uniqueId, str):
+            return False
         return bool(Helpers.UUID_PATTERN.match(uniqueId))
 
     @staticmethod

@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Final
+from typing import Final, LiteralString
 
 import aiomysql
 import aiosqlite
@@ -23,18 +23,13 @@ class Database:
         try:
             this.mdbPool = await aiomysql.create_pool(
                 loop=asyncio.get_event_loop(),
-                host=this.mdbConfig.host,
-                user=this.mdbConfig.user,
-                password=this.mdbConfig.password,
-                db=this.mdbConfig.database,
-                port=this.mdbConfig.port,
-                autocommit=True,
+                **this.mdbConfig.to_connection_params(),
             )
         except Exception:
             Logger.error("MDB is not available!")
             this.mdbPool = None
 
-    async def executeSetQuery(this, query: str, mdbQuery: str, values: tuple) -> bool:
+    async def executeSetQuery(this, query: LiteralString, mdbQuery: LiteralString, values: tuple) -> bool:
         cursor = await this.conn.execute(query, values)
         await this.conn.commit()
 
@@ -45,7 +40,7 @@ class Database:
                 return cursor.rowcount != 0 and cur.rowcount != 0
         return cursor.rowcount != 0
 
-    async def executeGetStrQuery(this, query: str, values: tuple) -> str | None:
+    async def executeGetStrQuery(this, query: LiteralString, values: tuple) -> str | None:
         cursor = await this.conn.execute(query, values)
         await this.conn.commit()
         if val := await cursor.fetchone():
@@ -54,35 +49,35 @@ class Database:
         return None
 
     async def setTimezone(this, userId: int, timezone: str, alias: str) -> bool:
-        query: str = "INSERT INTO timezones (user, timezone) VALUES (?, ?)\
+        query = "INSERT INTO timezones (user, timezone) VALUES (?, ?)\
                  ON CONFLICT DO UPDATE SET timezone = ?, alias = ?;"
-        mdbQuery: str = "INSERT INTO timezones (user, timezone) VALUES (%s, %s)\
+        mdbQuery = "INSERT INTO timezones (user, timezone) VALUES (%s, %s)\
                  ON DUPLICATE KEY UPDATE timezone = %s, alias = %s;"
 
         return await this.executeSetQuery(query, mdbQuery, (userId, timezone.replace(" ", "_"), alias, timezone.replace(" ", "_"), alias))
 
     async def getTimeZone(this, userId: int) -> str | None:
-        query: str = "SELECT timezone from timezones WHERE user = ?"
+        query = "SELECT timezone from timezones WHERE user = ?"
         return await this.executeGetStrQuery(query, (userId,))
 
     async def assignUUIDToUserId(this, uuid: Helpers.UUIDStr, userId: int, timezone: str) -> bool:
-        query: str = "INSERT INTO timezones (user, uuid, timezone, alias) VALUES (?, ?, ?, ?) ON CONFLICT(user) DO UPDATE SET uuid = ?;"
-        mdbQuery: str = "INSERT INTO timezones (user, uuid, timezone, alias) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE uuid = %s;"
+        query = "INSERT INTO timezones (user, uuid, timezone, alias) VALUES (?, ?, ?, ?) ON CONFLICT(user) DO UPDATE SET uuid = ?;"
+        mdbQuery = "INSERT INTO timezones (user, uuid, timezone, alias) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE uuid = %s;"
 
         return await this.executeSetQuery(query, mdbQuery, (userId, uuid, timezone.replace(" ", "_"), uuid, uuid))
 
     async def unassignUUIDFromUserId(this, userId: int) -> bool:
-        query: str = "UPDATE timezones SET uuid = NULL WHERE user = ?"
+        query = "UPDATE timezones SET uuid = NULL WHERE user = ?"
         return await this.executeSetQuery(query, query.replace("?", "%s"), (userId,))
 
     async def getUUIDByUserId(this, userId: int) -> str | None:
-        query: str = "SELECT uuid from timezones WHERE user = ?"
+        query = "SELECT uuid from timezones WHERE user = ?"
         return await this.executeGetStrQuery(query, (userId,))
 
     async def getUserIdByUUID(this, uuid: Helpers.UUIDStr) -> str | None:
-        query: str = "SELECT user from timezones WHERE uuid = ?"
+        query = "SELECT user from timezones WHERE uuid = ?"
         return await this.executeGetStrQuery(query, (uuid,))
 
     async def getTimezoneByUUID(this, uuid: Helpers.UUIDStr) -> str | None:
-        query: str = "SELECT timezone from timezones WHERE uuid = ?"
+        query = "SELECT timezone from timezones WHERE uuid = ?"
         return await this.executeGetStrQuery(query, (uuid,))

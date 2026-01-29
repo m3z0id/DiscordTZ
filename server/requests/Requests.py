@@ -8,7 +8,7 @@ from server.Api import ApiPermissions
 from server.ServerError import ErrorCode
 from server.protocol.Client import Client
 from server.requests.AbstractRequests import APIRequest, SimpleRequest, UserIdRequest, UUIDRequest, \
-    autoRespond
+    autoRespond, LinkPostData, IPData, UUIDData, BaseData
 from shared.Helpers import Helpers
 from shared.Timezones import Timezones
 from shell.Logger import Logger
@@ -34,7 +34,7 @@ class TimeZoneRequest(UserIdRequest):
                 this.response = ErrorCode.NOT_FOUND
 
 
-class TimeZoneFromIPRequest(APIRequest):
+class TimeZoneFromIPRequest(APIRequest[IPData]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot, ApiPermissions.IP_ADDRESS)
 
@@ -77,7 +77,7 @@ class TimeZoneFromIPRequest(APIRequest):
                 except geoip2.errors.AddressNotFoundError:
                     this.response = ErrorCode.NOT_FOUND
 
-class PingRequest(SimpleRequest):
+class PingRequest(SimpleRequest[BaseData]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot)
 
@@ -93,12 +93,13 @@ class PingRequest(SimpleRequest):
             this.response.message = "Pong"
 
 
-class UserIdUUIDLinkPost(UUIDRequest):
+class UserIdUUIDLinkPost(APIRequest[LinkPostData]):
     code: str = ""
 
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot, ApiPermissions.UUID_POST)
         this.timezone = this.data.get("timezone")
+        this.uuid = this.data.get("uuid")
 
     @override
     def packetNameStringRepr(this) -> str:
@@ -107,6 +108,12 @@ class UserIdUUIDLinkPost(UUIDRequest):
     @override
     @autoRespond
     async def process(this) -> None:
+        # Check UUID validity manually since we don't inherit UUIDRequest anymore
+        if (not this.response and this.uuid is None) or not Helpers.isUUID(this.uuid):
+            this.response = ErrorCode.BAD_REQUEST
+            this.response.message = "Invalid UUID" 
+            return
+
         await super().process()
 
         if not this.response:

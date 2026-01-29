@@ -3,7 +3,7 @@ import json
 import struct
 from asyncio import Server, IncompleteReadError
 from json import JSONDecodeError
-from typing import Final
+from typing import Final, TypedDict, NotRequired
 
 from cryptography.exceptions import InvalidTag
 
@@ -11,7 +11,7 @@ from server.protocol.APIPayload import APIPayload, PacketFlags
 from server.protocol.Client import Client
 from server.protocol.TCP import TCPClient
 from server.protocol.UDP import UDPProtocol
-from server.requests.AbstractRequests import SimpleRequest
+from server.requests.AbstractRequests import SimpleRequest, RequestDataPayload, RequestHeaders
 from server.requests.Requests import PingRequest, TimeZoneRequest, TimeZoneFromIPRequest, UserIdUUIDLinkPost, \
     TimezoneFromUUIDRequest, IsLinkedRequest, UserIDFromUUIDRequest, UUIDFromUserIDRequest
 from shared.Helpers import Helpers
@@ -105,17 +105,32 @@ class APIServer:
 
         return APIPayload.fromTuple(payload)
 
-    async def respondToInvalid(this, msg: bytes, client: Client):
+class JsonPacketEnvelope(TypedDict):
+    requestType: int | str
+    data: RequestDataPayload
+    headers: NotRequired[RequestHeaders]
+
+
+    async def respondToInvalid(this, msg: str | bytes, client: Client):
         if isinstance(client, TCPClient):
             protocol = "TCP"
         else:
             protocol = "UDP"
 
-        Logger.log(f"Got an invalid {protocol} request: {msg}")
-        fakeJson: dict = {"requestType": "INVALID", "data": {"message": msg}}
-        fakeJsonData: dict = fakeJson.pop("data")
+        # [SAFETY] Safely decode bytes; prevent JSON serialization crash
+        safe_msg: str = msg.decode('utf-8', errors='replace') if isinstance(msg, bytes) else msg
 
-        request = SimpleRequest(client, fakeJson, fakeJsonData, this.tzBot)
+        Logger.log(f"Got an invalid {protocol} request: {safe_msg}")
+        
+        fakeJson: JsonPacketEnvelope = {
+            "requestType": "INVALID",
+            "data": {"message": safe_msg}
+        }
+
+        # Extract data, explicitly typed as BaseData (compatible with RequestDataPayload)
+        fakeData = fakeJson["data"]
+
+        request = SimpleRequest(client, {}, fakeData, this.tzBot)
         await request.process()
         return
 
