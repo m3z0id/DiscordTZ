@@ -1,6 +1,4 @@
-from pathlib import Path
 from io import BytesIO
-from typing import Final, Tuple
 
 import discord
 from PIL import Image, ImageDraw, ImageFont
@@ -8,16 +6,11 @@ from discord.ext import commands
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
+from shared.Constants import IMAGE_CONTENT_TYPES, QUOTE_DEFAULT_FONT_SIZE, QUOTE_SMALLEST_FONT_SIZE, FONT_FILE, \
+    QUOTE_BOUNDING_BOX
 
 
 class Quote(commands.Cog):
-    FONT_PATH: Final[Path] = Path("additionalConfigs/Monocraft.ttc")
-
-    QUOTE_START_COORDS: Final[Tuple[int, int]] = 1024 + 200, 200
-    QUOTE_BOUNDING_BOX: Final[Tuple[int, int]] = 624, 594
-    QUOTE_DEFAULT_FONT_SIZE: Final[int] = 50
-    QUOTE_SMALLEST_FONT_SIZE: Final[int] = 15
-
     def __init__(this, client: TZBot):
         this.client = client
 
@@ -83,23 +76,23 @@ class Quote(commands.Cog):
         return Image.new("RGBA", this.QUOTE_BOUNDING_BOX, (0, 0, 0, 0))
 
     async def renderAuthor(this, text: str) -> Image.Image:
-        fontSize = this.QUOTE_DEFAULT_FONT_SIZE
+        fontSize = QUOTE_DEFAULT_FONT_SIZE
 
-        while fontSize > this.QUOTE_SMALLEST_FONT_SIZE:
-            font = ImageFont.truetype(this.FONT_PATH, fontSize)
+        while fontSize > QUOTE_SMALLEST_FONT_SIZE:
+            font = ImageFont.truetype(FONT_FILE, fontSize)
             bbox = font.getbbox(text)
             textWidth = int(bbox[2] - bbox[0])
             textHeight = int(bbox[3] - bbox[1])
 
-            if textWidth <= this.QUOTE_BOUNDING_BOX[0]:
-                image = Image.new("RGBA", (this.QUOTE_BOUNDING_BOX[0], textHeight), (0, 0, 0, 0))
+            if textWidth <= QUOTE_BOUNDING_BOX[0]:
+                image = Image.new("RGBA", (QUOTE_BOUNDING_BOX[0], textHeight), (0, 0, 0, 0))
                 draw = ImageDraw.Draw(image)
                 draw.text((-bbox[0], -bbox[1]), text, font=font, fill=(255, 255, 255, 255))
                 return image
 
             fontSize -= 1
 
-        return Image.new("RGBA", (this.QUOTE_BOUNDING_BOX[0], this.QUOTE_DEFAULT_FONT_SIZE), (0, 0, 0, 0))
+        return Image.new("RGBA", (QUOTE_BOUNDING_BOX[0], QUOTE_DEFAULT_FONT_SIZE), (0, 0, 0, 0))
 
     @commands.message_command(name="Quote Message")
     @collectCommandStats
@@ -108,7 +101,7 @@ class Quote(commands.Cog):
         authorPfpUrl = msg.author.avatar.url
         authorPfpUrl = authorPfpUrl.replace(".gif", ".webp")
 
-        pfp = await self.client.downloadFile(authorPfpUrl, self.client.IMAGE_CONTENT_TYPES)
+        pfp = await self.client.downloadFile(authorPfpUrl, IMAGE_CONTENT_TYPES)
         if pfp is None:
             await ctx.followup.send("**[i]** There was an error with your command execution.")
             return False

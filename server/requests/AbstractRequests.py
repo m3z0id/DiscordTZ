@@ -1,52 +1,25 @@
 import inspect
 import json
 import random
+from typing import ParamSpec, TypeVar, Callable, Coroutine, Any, TYPE_CHECKING
 
 import geoip2
 from geoip2 import errors  # noqa: F401
 from geoip2.models import City
 
-from server.Api import ApiKey, ApiPermissions
-from server.protocol.APIPayload import PacketFlags
+from server.APIKey import ApiKey, ApiPermissions
 from server.protocol.Client import Client
-from server.protocol.Response import Response
 from server.protocol.TCP import TCPClient
+from shared import Constants, Types
 from shared.Helpers import Helpers
+from shared.Types import ErrorCode, Response, RequestDataPayload, RequestHeaders, PacketFlags, UserIdData, UUIDData
 from shell.Logger import Logger
 
-
-from typing import ParamSpec, TypeVar, Callable, Coroutine, Any, TypedDict, NotRequired, override, TYPE_CHECKING, ReadOnly
-
 if TYPE_CHECKING:
-    from modules.TZBot import TZBot
+    pass
 
 P = ParamSpec("P")
 R = TypeVar("R")
-
-# 1. Header Definition
-class RequestHeaders(TypedDict):
-    # 'NotRequired' signals keys that might be missing in raw JSON
-    apiKey: NotRequired[ReadOnly[str]]
-
-# 2. Payload Definitions
-class BaseData(TypedDict):
-    # Used for error messaging
-    message: NotRequired[str]
-
-class UserIdData(TypedDict):
-    userId: int | str
-
-class UUIDData(TypedDict):
-    uuid: str
-
-class LinkPostData(UUIDData):
-    timezone: str
-
-class IPData(TypedDict):
-    ip: str
-
-# 3. Modern Union Type
-type RequestDataPayload = BaseData | UserIdData | UUIDData | LinkPostData | IPData
 
 
 def autoRespond(func: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Coroutine[Any, Any, R]]:
@@ -79,17 +52,13 @@ class SimpleRequest[T: RequestDataPayload]:
 
         this.protocol = "TCP" if isinstance(client, TCPClient) else "UDP"
         try:
-            this.city = this.tzBot.maxMindDb.city(this.client.ip.address)
+            this.city = this.tzBot.maxMindDb.city(str(this.client.ip))
         except geoip2.errors.AddressNotFoundError:
             this.city = None
 
-    def safe_get(this, key: str, default: any = None) -> any:
-        """Helper to safely access data that Type Checker assumes exists but Runtime might not."""
-        return this.data.get(key, default)
-
     @autoRespond
     async def process(this) -> None:
-        if this.city and this.city.country.iso_code in Helpers.BLACKLISTED_COUNTRIES:
+        if this.city and this.city.country.iso_code in Constants.BLACKLISTED_COUNTRIES:
             this.response = ErrorCode.BAD_GEOLOC
             return
 
@@ -154,8 +123,6 @@ class APIRequest[T: RequestDataPayload](PartiallyEncryptedRequest[T]):
 class UserIdRequest(APIRequest[UserIdData]):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot", *requiredPerms: ApiPermissions) -> None:
         super().__init__(client, headers, data, tzBot, *requiredPerms)
-        # Static Analysis now knows self.data has 'userId'
-        # Runtime safety: Handle cases where key is missing if JSON was bad
         this.userId = int(this.data.get("userId")) if str(this.data.get("userId")).isnumeric() else None
 
     async def process(this) -> None:
@@ -171,7 +138,7 @@ class UUIDRequest(APIRequest[UUIDData]):
         this.uuid = this.data.get("uuid")
 
     async def process(this) -> None:
-        if (not this.response and this.uuid is None) or not Helpers.isUUID(this.uuid):
+        if (not this.response and this.uuid is None) or not Types.isUUID(this.uuid):
             this.response = ErrorCode.BAD_REQUEST
             this.response.message = "Invalid UUID"
 

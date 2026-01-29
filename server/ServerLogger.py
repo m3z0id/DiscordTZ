@@ -1,20 +1,17 @@
 import io
 import json
 from datetime import datetime
-from typing import Final
 
 import discord
 
-from server.ServerError import ErrorCode
-from server.protocol.APIPayload import PacketFlags
 from server.requests.AbstractRequests import SimpleRequest
 from server.requests.Requests import PingRequest, TimeZoneFromIPRequest, UserIdUUIDLinkPost
+from shared.Constants import MAX_DATA_EMBED_LEN
 from shared.Helpers import Helpers
+from shared.Types import PacketFlags
 
 
 class ServerLogger:
-    MAX_DATA_EMBED_LEN: Final[int] = 900
-
     def __init__(this, tzBot: "TZBot", loggingEnabled: bool) -> None:
         this.tzBot = tzBot
         this.loggingEnabled = loggingEnabled
@@ -40,7 +37,7 @@ class ServerLogger:
         if not warning and isinstance(request, UserIdUUIDLinkPost) and request.response.code == ErrorCode.OK.code:
             request.response.message = "<redacted>"
 
-        if len(str(request.data)) < this.MAX_DATA_EMBED_LEN:
+        if len(str(request.data)) < MAX_DATA_EMBED_LEN:
             embed.add_field(name="Request Data", value=f"```{str(request.data).replace("'", "\"")}```", inline=False)
         else:
             embed.add_field(name="Request Data", value=f"Request is included in the file below due to its size.", inline=False)
@@ -48,7 +45,7 @@ class ServerLogger:
             fileSendList.append(requestFile)
 
         if request.response:
-            if len(str(request.response)) < this.MAX_DATA_EMBED_LEN:
+            if len(str(request.response)) < MAX_DATA_EMBED_LEN:
                 embed.add_field(name="Response Data", value=f"```{json.dumps(request.response.__dict__)}```", inline=False)
             else:
                 embed.add_field(name="Response Data", value=f"Request is included in the file below due to its size.", inline=False)

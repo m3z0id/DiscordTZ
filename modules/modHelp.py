@@ -5,9 +5,7 @@ from discord.ext import commands
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
-from modules.helplib.Command import Command
-from shared.Helpers import Helpers
-from shell.Logger import Logger
+from shared.Types import Command
 
 
 class Help(commands.Cog):

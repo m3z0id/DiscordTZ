@@ -7,26 +7,19 @@ from shared.Helpers import Helpers
 from shell.Logger import Logger
 
 
-async def getUnloadedModules(ctx: discord.AutocompleteContext = None) -> list[str]:
-    if ctx:
-        if not await Helpers.tzBot.is_owner(ctx.interaction.user):
-            return []
-
-    return [module for module in Helpers.tzBot.getUnloadedModules() if module.lower().startswith(ctx.value.lower())]
-
-
-async def getLoadedModules(ctx: discord.AutocompleteContext = None) -> list[str]:
-    if ctx:
-        if not await Helpers.tzBot.is_owner(ctx.interaction.user):
-            return []
-
-    return [module for module in Helpers.tzBot.getLoadedModules() if module.lower().startswith(ctx.value.lower())]
-
 class ModuleManagement(commands.Cog):
     modulesGroup = discord.SlashCommandGroup(name="modules", description="Modules related stuff", checks=[commands.is_owner()])
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
+
+    async def getLoadedModules(this, ctx: discord.AutocompleteContext) -> list[str]:
+        if not await this.client.is_owner(ctx.interaction.user): return []
+        return [module for module in this.client.getLoadedModules() if module.lower().startswith(ctx.value.lower())]
+
+    async def getUnloadedModules(this, ctx: discord.AutocompleteContext) -> list[str]:
+        if not this.client.is_owner(ctx.interaction.user): return []
+        return [module for module in this.client.getUnloadedModules() if module.lower().startswith(ctx.value.lower())]
 
     @modulesGroup.command(name="load", description="Loads a specific module.")
     @commands.is_owner()

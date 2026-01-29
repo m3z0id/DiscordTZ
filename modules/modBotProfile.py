@@ -1,55 +1,38 @@
 import asyncio
 import copy
-import io
 import json
-from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Final
 
 import discord
-from dataclasses_json import dataclass_json
-from discord.ext import bridge
 from discord.ext import commands
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
+from shared.Constants import PROFILE_FILE, ACTIVITY_TYPES, PRESENCE_TYPES
+from shared.Types import Profile
 from shell.Logger import Logger
 
 
-@dataclass_json
-@dataclass
-class Profile:
-    presence: str = "online"
-    activityType: int = -1
-    activityName: str = ""
-
-
 class BotProfile(commands.Cog):
-    client: TZBot
-
     PROFILE_GROUP = discord.SlashCommandGroup(name="profile", description="[Bot Owner] Bot's profile related stuff", checks=[commands.is_owner()])
-
-    PROFILE_FILE: Final[Path] = Path("state/profile.json")
-    ACTIVITY_TYPES: Final[list[str]] = ["unknown", "playing", "streaming", "listening", "watching"]
-    PRESENCE_TYPES: Final[list[str]] = ["Online", "Offline", "Idle", "DND", "Invisible", "Streaming"]
-    PFP_CONTENT_TYPES: Final[set[str]] = {"image/gif", "image/png", "image/jpeg", "image/webp"}
 
     currentProfile: Profile
     permanentProfile: Profile
 
     def __init__(this, bot: TZBot):
-        if not this.PROFILE_FILE.exists():
-            Logger.warning(f"{this.PROFILE_FILE.name} doesn't exist!")
+        if not PROFILE_FILE.exists():
+            Logger.warning(f"{PROFILE_FILE.name} doesn't exist!")
             Logger.log("Falling back to defaults...")
             this.currentProfile = Profile()
             asyncio.create_task(this.saveStatus())
         else:
-            with this.PROFILE_FILE.open("r") as f:
+            with PROFILE_FILE.open("r") as f:
                 try:
                     this.currentProfile = Profile.schema().loads(f.read())
                 except JSONDecodeError as e:
-                    Logger.warning(f"Failed to decode {this.PROFILE_FILE.name}: {e}")
+                    Logger.warning(f"Failed to decode {PROFILE_FILE.name}: {e!s}")
                     Logger.log("Falling back to defaults...")
                     this.currentProfile = Profile()
 
@@ -62,7 +45,7 @@ class BotProfile(commands.Cog):
         await this.reloadPresence()
 
     async def saveStatus(this):
-        with this.PROFILE_FILE.open("w") as f:
+        with PROFILE_FILE.open("w") as f:
             f.write(json.dumps(this.permanentProfile.__dict__))
 
     async def reloadPresence(this):
@@ -93,8 +76,8 @@ class BotProfile(commands.Cog):
 
         if activitytype:
             if persistent:
-                this.permanentProfile.activityType = this.ACTIVITY_TYPES.index(activitytype) - 1
-            this.currentProfile.activityType = this.ACTIVITY_TYPES.index(activitytype) - 1
+                this.permanentProfile.activityType = ACTIVITY_TYPES.index(activitytype) - 1
+            this.currentProfile.activityType = ACTIVITY_TYPES.index(activitytype) - 1
 
         if title:
             if persistent:

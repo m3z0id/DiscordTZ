@@ -3,6 +3,7 @@ from discord.ext import commands
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
+from shared import Types
 from shared.Helpers import Helpers
 
 
@@ -21,7 +22,7 @@ class TzLink(commands.Cog):
         testUuid = await this.client.db.getUUIDByUserId(ctx.user.id)
         
         testId = None
-        if testUuid and Helpers.isUUID(testUuid):
+        if testUuid and Types.isUUID(testUuid):
             testId = await this.client.db.getUserIdByUUID(testUuid)
 
         if testUuid and testId and int(testId) == ctx.user.id:
@@ -42,7 +43,7 @@ class TzLink(commands.Cog):
         testUuid = await this.client.db.getUUIDByUserId(ctx.user.id)
 
         testId = None
-        if testUuid and Helpers.isUUID(testUuid):
+        if testUuid and Types.isUUID(testUuid):
             testId = await this.client.db.getUserIdByUUID(testUuid)
 
         if not (testUuid and testId) or int(testId) != ctx.user.id:

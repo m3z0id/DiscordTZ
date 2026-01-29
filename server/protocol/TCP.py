@@ -1,7 +1,7 @@
 import asyncio
 
-from server.protocol.APIPayload import PacketFlags
 from server.protocol.Client import Client
+from shared.Types import PacketFlags
 
 
 class TCPClient(Client):

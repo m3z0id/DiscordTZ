@@ -11,30 +11,19 @@ from discord.ext import commands, bridge
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
+from shared.Constants import IMAGE_CONTENT_TYPES, CHROMA_EXEC_FILE, VALID_COLOR_SPACES
 from shell.Logger import Logger
 
 
 class Chroma(commands.Cog):
-    client: TZBot
-
-    CHROMA_EXEC: Final[Path] = Path("./execs/chroma")
-    VALID_COLOR_SPACES: Final[set[str]] = {"rgb", "hsl", "oklab", "oklch", "okhsl"}
-
-    EMOJI_PATTERN: Final[re.Pattern[str]] = re.compile("<:[a-zA-Z0-9_-]{2,32}:(\\d{18,20})>")
-    URL_REGEX: Final[re.Pattern[str]] = re.compile(
-        r"https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)")
-
-    TEMP_IMAGES_PATH: Final[Path] = Path("temp/")
-
     COMMAND_LOCK: Final[asyncio.Semaphore] = asyncio.Semaphore(3)
-
-    outputtedImages: set[Path] = set()
+    outputtedImages: set[Path] = {}
 
     def __init__(this, client: TZBot):
         this.client = client
 
-        if not Chroma.CHROMA_EXEC.is_file():
-            Logger.warning(f"Chroma executable not found at {Chroma.CHROMA_EXEC}")
+        if not CHROMA_EXEC_FILE.is_file():
+            Logger.warning(f"Chroma executable not found at {CHROMA_EXEC_FILE}")
 
     async def cleanup(this):
         for _ in this.outputtedImages:
@@ -46,7 +35,7 @@ class Chroma(commands.Cog):
     async def runChroma(this, imgPath: Path, colorspace: str, modifications: str) -> BytesIO:
         outputted = Path(this.TEMP_IMAGES_PATH / f"{imgPath.stem}MODIFIED.bmp")
         process = await asyncio.create_subprocess_exec(
-            this.CHROMA_EXEC.absolute(), "-f", f"{imgPath.parent}/{imgPath.name}", "-o", f"{outputted.parent}/{outputted.name}",
+            CHROMA_EXEC_FILE.absolute(), "-f", f"{imgPath.parent}/{imgPath.name}", "-o", f"{outputted.parent}/{outputted.name}",
             f"--{colorspace}", modifications,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
@@ -68,14 +57,14 @@ class Chroma(commands.Cog):
 
     async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
         images: set[tuple[str, bytes]] = {(attachment.content_type, await attachment.read()) for attachment in
-                                               msg.attachments if attachment.content_type in this.client.IMAGE_CONTENT_TYPES}
+                                               msg.attachments if attachment.content_type in IMAGE_CONTENT_TYPES}
         return images
 
     async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, bytes]]:
         images: set[tuple[str, bytes]] = set()
         for match in re.finditer(this.URL_REGEX, msg.content):
             url = match.group(0)
-            response = await this.client.downloadFile(url, this.client.IMAGE_CONTENT_TYPES)
+            response = await this.client.downloadFile(url, IMAGE_CONTENT_TYPES)
             if response: images.add(response)
 
         return images
@@ -85,11 +74,11 @@ class Chroma(commands.Cog):
         if len(msg.embeds) > 0:
             for embed in msg.embeds:
                 if embed.image:
-                    response = await this.client.downloadFile(embed.image.url, this.client.IMAGE_CONTENT_TYPES)
+                    response = await this.client.downloadFile(embed.image.url, IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
 
                 if embed.thumbnail:
-                    response = await this.client.downloadFile(embed.thumbnail.url, this.client.IMAGE_CONTENT_TYPES)
+                    response = await this.client.downloadFile(embed.thumbnail.url, IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
 
         return images
@@ -100,7 +89,7 @@ class Chroma(commands.Cog):
         for match in re.finditer(this.EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
             emojiUrl = f"https://cdn.discordapp.com/emojis/{emojiId}"
-            response = await this.client.downloadFile(emojiUrl, this.client.IMAGE_CONTENT_TYPES)
+            response = await this.client.downloadFile(emojiUrl, IMAGE_CONTENT_TYPES)
             if response: images.add(response)
 
         return images
@@ -111,7 +100,7 @@ class Chroma(commands.Cog):
         if not isinstance(ctx, bridge.BridgeExtContext):
             await ctx.respond("Slash version isn't implemented yet. Please, use the prefixed version instead.", ephemeral=True)
 
-        if not Chroma.CHROMA_EXEC.is_file():
+        if not CHROMA_EXEC_FILE.is_file():
             await ctx.respond("This feature is disabled.")
 
         await ctx.defer()

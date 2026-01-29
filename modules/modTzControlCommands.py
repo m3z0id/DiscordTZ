@@ -3,17 +3,15 @@ import datetime
 import discord
 import pytz
 from discord.ext import commands
-from typing_extensions import Final
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
-from shared.Timezones import Timezones
+from shared.Constants import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST
 from shell.Logger import Logger
 
 
 class TzCommands(commands.Cog):
     timezoneGroup = discord.SlashCommandGroup(name="timezone", description="Timezone related stuff")
-    MAX_SHOWABLE_RESULTS: Final[int] = 25
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
@@ -21,19 +19,16 @@ class TzCommands(commands.Cog):
     async def getTimezones(this, ctx: discord.AutocompleteContext) -> list[str]:
         result: list[str] = []
 
-        cityMatches = [f"{tz['area']}/{tz['city']}" for tz in Timezones.TIMEZONES if
+        cityMatches = [f"{tz['area']}/{tz['city']}" for tz in TIMEZONES if
                        str(tz.get("city", "")).lower().startswith(ctx.value.lower())]
-        areaMatches = [f"{tz['area']}/{tz['city']}" for tz in Timezones.TIMEZONES if
+        areaMatches = [f"{tz['area']}/{tz['city']}" for tz in TIMEZONES if
                        str(tz.get("area", "")).lower().startswith(ctx.value.lower())]
 
-        for choice in cityMatches[:this.MAX_SHOWABLE_RESULTS]:
-            result.append(choice)  # noqa: PERF402
+        if len(cityMatches) > MAX_SHOWABLE_RESULTS:
+            return cityMatches[:MAX_SHOWABLE_RESULTS]
 
-        if len(result) < this.MAX_SHOWABLE_RESULTS:
-            for choice in areaMatches:
-                if len(result) == this.MAX_SHOWABLE_RESULTS:
-                    break
-                result.append(choice)
+        result.extend(cityMatches)
+        result.extend(areaMatches[:MAX_SHOWABLE_RESULTS - len(cityMatches)])
 
         return result
 
@@ -48,7 +43,7 @@ class TzCommands(commands.Cog):
         if tzalias is None:
             tzalias = ctx.user.name
 
-        if timezone not in Timezones.CHECK_LIST:
+        if timezone not in TIMEZONE_CHECK_LIST:
             Logger.error(f"{ctx.user} tried to set their timezone to {timezone}.")
             await ctx.response.send_message("Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", ephemeral=True)
             return False
@@ -75,22 +70,6 @@ class TzCommands(commands.Cog):
         else:
             await ctx.response.send_message(f"Your timezone is {res.replace('_', ' ')}", ephemeral=True)
             return True
-
-    @timezoneGroup.command(name="alias", description="Alias when people want to know your time.")
-    @collectCommandStats
-    async def alias(this, ctx: discord.ApplicationContext, tzalias: discord.Option(str, "Alias with which other people will get your time.")) -> bool:
-        if " " in tzalias:
-            await ctx.response.send_message("Aliases can't contain spaces!", ephemeral=True)
-            return False
-
-        if await this.client.db.setAlias(ctx.user.id, tzalias):
-            embed = await this.client.getSuccess(user=ctx.user)
-            await ctx.response.send_message(embed=embed, ephemeral=True)
-            return True
-        else:
-            embed = await this.client.getFail(description="A user already has this alias!", user=ctx.user)
-            await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
 
     @discord.slash_command(name="now", description="Shows person's time.")
     @collectCommandStats
@@ -120,7 +99,7 @@ class TzCommands(commands.Cog):
     @discord.slash_command(name="tznow", description="Shows the time in a certain timezone.")
     @collectCommandStats
     async def nowTz(this, ctx: discord.ApplicationContext, timezone: discord.Option(str, "Timezone to show", autocomplete=getTimezones)) -> bool:
-        if timezone not in Timezones.CHECK_LIST:
+        if timezone not in TIMEZONE_CHECK_LIST:
             await ctx.response.send_message("Invalid timezone. Use [this table] (https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", ephemeral=True)
             return False
 

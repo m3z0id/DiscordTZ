@@ -3,7 +3,7 @@ import datetime
 import discord
 
 from modules.TZBot import TZBot
-from server.Api import ApiKey
+from server.APIKey import ApiKey
 from shell.Logger import Logger
 
 

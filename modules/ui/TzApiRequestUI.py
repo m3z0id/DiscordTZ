@@ -5,7 +5,7 @@ import discord
 
 from modules.TZBot import TZBot
 from modules.ui.DecisionActionRow import DecisionActionRow
-from server.Api import ApiKey, ApiPermissions
+from server.APIKey import ApiKey, ApiPermissions
 from shell.Logger import Logger
 
 

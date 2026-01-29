@@ -22,62 +22,32 @@ from discord.ext.commands import errors
 from geoip2 import database  # noqa: F401
 from six import BytesIO
 
-from config.Config import Config
 from database.APIKeyDatabase import ApiKeyDatabase
 from database.DataDatabase import Database
 from database.stats.StatsDatabase import StatsDatabase
-from modules.helplib.Command import Command
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
+from shared.Constants import CONFIG_FILE, GEO_IP_DB_FILE, DIALOG_OWNERS_FILE, SUCCESS, FAIL, HTTP_HEADERS, DAY_SECONDS, \
+    GEO_IP_URL, MODULES_DIR, SORRY_PATTERN, ROMANIA_PATTERN
 from shared.Helpers import Helpers
+from shared.Types import Config, Command
 from shell.Logger import Logger
-from typing import Literal
-
-ModuleName = Literal[
-    "BotProfile", "Chroma", "Help", "Image", 
-    "ModuleManagement", "Quote", "ServerLogging", 
-    "TzApiKeyManagement", "TzControlCommands", "TzLink"
-]
 
 
 class TZBot(bridge.Bot):
-    loadedModules: list[ModuleName] = []
+    loadedModules: list[str] = []
     loadedCommands: list[Command] = []
-
-    CONFIG_FILE: Final[Path] = Path("config.json")
-    DIALOG_OWNERS_FILE: Final[Path] = Path("state/dialogOwners.json")
-    MODULES_DIR: Final[Path] = Path("modules/")
 
     API_SERVER: Final[APIServer]
     API_SERVER_TASK: Final[asyncio.Task]
     API_PACKET_LOGGER: Final[ServerLogger]
-
-    GEO_IP_DB_FILE: Final[Path] = Path("state/GeoLite2-City.mmdb")
-    GEO_IP_URL: Final[str] = "https://download.maxmind.com/geoip/databases/GeoLite2-City/download?suffix=tar.gz"
-    DAY_SECONDS: Final[int] = 86_400
-
-    type Headers = dict[str, str]
-
-    IMAGE_CONTENT_TYPES: Final[set[str]] = {"image/bmp", "image/png", "image/jpeg", "image/webp"}
-    HTTP_HEADERS: Final[Headers] = {
-        "User-Agent": "TZUtil",
-        "Accept": "text/html,application/xhtml+xml,application/xml",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, zstd"
-    }
-
-    SUCCESS: Final[discord.Embed] = discord.Embed(title="**Success!**", description="The operation was successful!", color=discord.Color.green())
-    FAIL: Final[discord.Embed] = discord.Embed(title="**Something went wrong.**", description="There was an error in the operation.", color=discord.Color.red())
-
-    SORRY_REGEX: Final[re.Pattern] = re.compile(r"sorry", re.IGNORECASE)
-    ROMANIA_REGEX: Final[re.Pattern] = re.compile(r"(vampires?|st(eal|olen?))", re.IGNORECASE)
 
     syncOverride: bool = False
 
     def __init__(this, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        with this.CONFIG_FILE.open("r") as f:
+        with CONFIG_FILE.open("r") as f:
             this.config: Config = Config.schema().loads(f.read())
 
         Helpers.tzBot = this
@@ -86,22 +56,22 @@ class TZBot(bridge.Bot):
         this.linkCodes: dict[str, tuple[str, str]] = {}
         this.db: Database = Database(this.config.mariadbDetails)
         this.apiDb = ApiKeyDatabase(this.config.server.apiKeysKey)
-        if not this.GEO_IP_DB_FILE.parent.exists():
-            this.GEO_IP_DB_FILE.parent.mkdir(exist_ok=True)
-        if not this.GEO_IP_DB_FILE.exists():
-            this.GEO_IP_DB_FILE.touch(exist_ok=True)
+        if not GEO_IP_DB_FILE.parent.exists():
+            GEO_IP_DB_FILE.parent.mkdir(exist_ok=True)
+        if not GEO_IP_DB_FILE.exists():
+            GEO_IP_DB_FILE.touch(exist_ok=True)
         try:
-            this.maxMindDb: geoip2.database.Reader = geoip2.database.Reader(this.GEO_IP_DB_FILE)
+            this.maxMindDb: geoip2.database.Reader = geoip2.database.Reader(GEO_IP_DB_FILE)
         except maxminddb.errors.InvalidDatabaseError:
             Logger.error("MaxMind DB is invalid, will fetch")
             this.syncOverride = True
 
         this.statsDb: Final[StatsDatabase] = StatsDatabase()
 
-        if not this.DIALOG_OWNERS_FILE.exists():
-            this.DIALOG_OWNERS_FILE.touch()
+        if not DIALOG_OWNERS_FILE.exists():
+            DIALOG_OWNERS_FILE.touch()
         try:
-            with this.DIALOG_OWNERS_FILE.open("r") as f:
+            with DIALOG_OWNERS_FILE.open("r") as f:
                 this.dialogOwners: set[int] = set(json.loads(f.read()))
         except json.JSONDecodeError:
             this.dialogOwners: set[int] = set()
@@ -111,7 +81,7 @@ class TZBot(bridge.Bot):
 
     # Command Response
     async def getSuccess(this, *, description: str | None = None, user: discord.User | None = None) -> discord.Embed:
-        successCpy = copy.deepcopy(this.SUCCESS)
+        successCpy = copy.deepcopy(SUCCESS)
         successCpy.timestamp = datetime.datetime.now()
         if user:
             successCpy.set_footer(text=user.name, icon_url=user.avatar.url)
@@ -121,7 +91,7 @@ class TZBot(bridge.Bot):
         return successCpy
 
     async def getFail(this, *, description: str | None = None, user: discord.User | None = None) -> discord.Embed:
-        failCpy = copy.deepcopy(this.FAIL)
+        failCpy = copy.deepcopy(FAIL)
         failCpy.timestamp = datetime.datetime.now()
         if user:
             failCpy.set_footer(text=user.name, icon_url=user.avatar.url)
@@ -133,7 +103,7 @@ class TZBot(bridge.Bot):
     # HTTP Client
     @contextlib.asynccontextmanager
     async def getNewClient(this, contentTypes: set[str]) -> AsyncGenerator[ClientSession]:
-        headersCpy = deepcopy(this.HTTP_HEADERS)
+        headersCpy = deepcopy(HTTP_HEADERS)
         headersCpy["Accept"] = ",".join(contentTypes)
         session = ClientSession(headers=headersCpy)
         try:
@@ -161,16 +131,16 @@ class TZBot(bridge.Bot):
 
     async def syncGeoIP(this):
         if not this.syncOverride:
-            if this.GEO_IP_DB_FILE.is_file():
+            if GEO_IP_DB_FILE.is_file():
                 currentTime = time.time()
-                secondsDiff = currentTime - this.GEO_IP_DB_FILE.stat().st_ctime
-                if secondsDiff < this.DAY_SECONDS:
+                secondsDiff = currentTime - GEO_IP_DB_FILE.stat().st_ctime
+                if secondsDiff < DAY_SECONDS:
                     Logger.log("Skipping GeoLite2 database download, it was updated less than 24 hours ago.")
                     return
 
         Logger.log("Downloading GeoLite2 database...")
         async with this.getNewClient({"application/tar", "application/tar+gzip"}) as session:
-            async with session.get(this.GEO_IP_URL, auth=BasicAuth(str(this.config.maxmind.accountId), this.config.maxmind.token, "utf-8")) as response:
+            async with session.get(GEO_IP_URL, auth=BasicAuth(str(this.config.maxmind.accountId), this.config.maxmind.token, "utf-8")) as response:
                 if response.status == 200:
                     tarArchiveRaw = BytesIO(await response.read())
                 else:
@@ -189,10 +159,10 @@ class TZBot(bridge.Bot):
             Logger.error("Failed to find the database file in the TAR.")
             return
 
-        with this.GEO_IP_DB_FILE.open("wb") as f:
+        with GEO_IP_DB_FILE.open("wb") as f:
             f.write(mmdb)
 
-        this.maxMindDb = geoip2.database.Reader(this.GEO_IP_DB_FILE)
+        this.maxMindDb = geoip2.database.Reader(GEO_IP_DB_FILE)
         Logger.success("Fresh GeoIP database fetched!")
 
     # WSS shit
@@ -236,15 +206,15 @@ class TZBot(bridge.Bot):
 
     # Modules shit
     def getAvailableModules(this) -> list[str]:
-        return [file.stem[3:] for file in this.MODULES_DIR.glob("mod*.py")]
+        return [file.stem[3:] for file in MODULES_DIR.glob("mod*.py")]
 
-    def getLoadedModules(this) -> list[ModuleName]:
+    def getLoadedModules(this) -> list[str]:
         return this.loadedModules
 
     def getUnloadedModules(this) -> list[str]:
         return [module for module in this.getAvailableModules() if module not in this.loadedModules]
 
-    async def unloadModules(this, modules: list[ModuleName]) -> None:
+    async def unloadModules(this, modules: list[str]) -> None:
         for module in modules:
             if module not in this.getLoadedModules():
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
@@ -259,7 +229,7 @@ class TZBot(bridge.Bot):
         await this.refreshCommands()
         Logger.success(f"Module {", ".join(modules)} unloaded!")
 
-    async def loadModules(this, modules: list[ModuleName]) -> None:
+    async def loadModules(this, modules: list[str]) -> None:
         for module in modules:
             if module not in this.getUnloadedModules():
                 raise ExtensionAlreadyLoaded(f"Module {module} is loaded")
@@ -274,7 +244,7 @@ class TZBot(bridge.Bot):
         await this.refreshCommands()
         Logger.success(f"Modules {", ".join(modules)} loaded!")
 
-    async def reloadModules(this, modules: list[ModuleName]) -> None:
+    async def reloadModules(this, modules: list[str]) -> None:
         for module in modules:
             if module not in this.getLoadedModules():
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
@@ -315,7 +285,7 @@ class TZBot(bridge.Bot):
     # Persistent UI shit
     async def addOwner(this, userId: int) -> None:
         this.dialogOwners.add(userId)
-        with this.DIALOG_OWNERS_FILE.open("w") as f:
+        with DIALOG_OWNERS_FILE.open("w") as f:
             f.write(json.dumps(list(this.dialogOwners)))
 
     # Verification code invalidifier
@@ -329,8 +299,8 @@ class TZBot(bridge.Bot):
         await this.process_commands(message)
         if message.author.id == this.ownerId:
             # Canada
-            if bool(this.SORRY_REGEX.search(message.content)):
+            if bool(SORRY_PATTERN.search(message.content)):
                 await message.reply("🇨🇦", mention_author=False)
             # Romania
-            elif bool(this.ROMANIA_REGEX.search(message.content)):
+            elif bool(ROMANIA_PATTERN.search(message.content)):
                 await message.reply("🇷🇴", mention_author=False)

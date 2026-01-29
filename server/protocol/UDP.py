@@ -3,8 +3,8 @@ import contextlib
 from asyncio import Queue
 from typing import Final
 
-from server.protocol.APIPayload import PacketFlags
 from server.protocol.Client import Client
+from shared.Types import PacketFlags
 
 
 class UDPClient(Client):
@@ -14,7 +14,7 @@ class UDPClient(Client):
 
     async def send(this, data: bytes) -> None:
         finalData = await this._applyFlags(data)
-        this.transport.sendto(finalData, tuple(this.ip))
+        this.transport.sendto(finalData, (this.ip, this.port))
 
 
 class UDPProtocol(asyncio.DatagramProtocol):

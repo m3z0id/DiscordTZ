@@ -1,33 +1,30 @@
-from pathlib import Path
-from typing import Final, Set, Tuple
-
 import discord
 from Crypto.Random import random as rand
 from discord.ext import commands
 
 from database.stats.StatsDatabase import collectCommandStats
 from modules.TZBot import TZBot
+from shared.Constants import BMPGEN_EXEC_FILE, MAGICK_EXEC_FILE, COLORLIST_FILE
 from shared.Helpers import Helpers
 from shell.Logger import Logger
 
 
 class ImageGen(commands.Cog):
-    COLORLIST_FILE: Final[Path] = Path("state/colorlist.bin")
-    colorSet: Set[Tuple[int, int, int]]
+    colorSet: set[tuple[int, int, int]]
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-        if not Helpers.BMPGEN_EXEC_FILE.is_file():
-            Logger.warning(f"BMPGen executable not found at {Helpers.BMPGEN_EXEC_FILE}")
-        if not Helpers.MAGICK_EXEC_FILE.is_file():
-            Logger.warning(f"ImageMagick executable not found at {Helpers.MAGICK_EXEC_FILE}")
+        if not BMPGEN_EXEC_FILE.is_file():
+            Logger.warning(f"BMPGen executable not found at {BMPGEN_EXEC_FILE}")
+        if not MAGICK_EXEC_FILE.is_file():
+            Logger.warning(f"ImageMagick executable not found at {MAGICK_EXEC_FILE}")
 
-        if not this.COLORLIST_FILE.is_file():
+        if not COLORLIST_FILE.is_file():
             this.colorSet = set()
-            this.COLORLIST_FILE.touch(exist_ok=True)
+            COLORLIST_FILE.touch(exist_ok=True)
         else:
-            with this.COLORLIST_FILE.open("rb") as f:
+            with COLORLIST_FILE.open("rb") as f:
                 data = f.read()
                 this.colorSet = {(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3)}
 
@@ -56,7 +53,7 @@ class ImageGen(commands.Cog):
     @commands.cooldown(1, 3, commands.BucketType.user)
     @collectCommandStats
     async def color(this, ctx: discord.ApplicationContext) -> bool:
-        if not (Helpers.BMPGEN_EXEC_FILE.is_file() and Helpers.MAGICK_EXEC_FILE.is_file()):
+        if not (BMPGEN_EXEC_FILE.is_file() and MAGICK_EXEC_FILE.is_file()):
             await ctx.respond("This feature is disabled.")
 
         color: tuple[int, int, int] = (rand.randint(0, 255), rand.randint(0, 255), rand.randint(0, 255))
@@ -77,7 +74,7 @@ class ImageGen(commands.Cog):
             )
 
             this.colorSet.add(color)
-            with this.COLORLIST_FILE.open("ab") as writer:
+            with COLORLIST_FILE.open("ab") as writer:
                 writer.write(fileOutput)
 
         else:

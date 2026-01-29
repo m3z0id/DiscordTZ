@@ -4,14 +4,13 @@ from typing import override
 import geoip2.errors
 import tzlocal
 
-from server.Api import ApiPermissions
-from server.ServerError import ErrorCode
+from server.APIKey import ApiPermissions
 from server.protocol.Client import Client
-from server.requests.AbstractRequests import APIRequest, SimpleRequest, UserIdRequest, UUIDRequest, \
-    autoRespond, LinkPostData, IPData, UUIDData, BaseData
+from server.requests.AbstractRequests import autoRespond, UserIdRequest, APIRequest, UUIDRequest, SimpleRequest
+from shared import Types
+from shared.Constants import TIMEZONE_CHECK_LIST
 from shared.Helpers import Helpers
-from shared.Timezones import Timezones
-from shell.Logger import Logger
+from shared.Types import ErrorCode, IPData, TimezoneData
 
 
 class TimeZoneRequest(UserIdRequest):
@@ -77,7 +76,7 @@ class TimeZoneFromIPRequest(APIRequest[IPData]):
                 except geoip2.errors.AddressNotFoundError:
                     this.response = ErrorCode.NOT_FOUND
 
-class PingRequest(SimpleRequest[BaseData]):
+class PingRequest(SimpleRequest):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
         super().__init__(client, headers, data, tzBot)
 
@@ -93,7 +92,7 @@ class PingRequest(SimpleRequest[BaseData]):
             this.response.message = "Pong"
 
 
-class UserIdUUIDLinkPost(APIRequest[LinkPostData]):
+class UserIdUUIDLinkPost(APIRequest[TimezoneData]):
     code: str = ""
 
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: "TZBot") -> None:
@@ -109,7 +108,7 @@ class UserIdUUIDLinkPost(APIRequest[LinkPostData]):
     @autoRespond
     async def process(this) -> None:
         # Check UUID validity manually since we don't inherit UUIDRequest anymore
-        if (not this.response and this.uuid is None) or not Helpers.isUUID(this.uuid):
+        if (not this.response and this.uuid is None) or not Types.isUUID(this.uuid):
             this.response = ErrorCode.BAD_REQUEST
             this.response.message = "Invalid UUID" 
             return
@@ -117,7 +116,7 @@ class UserIdUUIDLinkPost(APIRequest[LinkPostData]):
         await super().process()
 
         if not this.response:
-            if this.timezone not in Timezones.CHECK_LIST:
+            if this.timezone not in TIMEZONE_CHECK_LIST:
                 this.response = ErrorCode.NOT_FOUND
 
             elif await this.tzBot.db.getUserIdByUUID(this.uuid) or this.uuid in [val[0] for val in Helpers.tzBot.linkCodes.values()]:

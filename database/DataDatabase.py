@@ -5,8 +5,8 @@ from typing import Final, LiteralString
 import aiomysql
 import aiosqlite
 
-from config.Config import MariaDBConfig
 from shared.Helpers import Helpers
+from shared.Types import MariaDBConfig
 from shell.Logger import Logger
 
 
@@ -23,7 +23,7 @@ class Database:
         try:
             this.mdbPool = await aiomysql.create_pool(
                 loop=asyncio.get_event_loop(),
-                **this.mdbConfig.to_connection_params(),
+                **this.mdbConfig.__dict__,
             )
         except Exception:
             Logger.error("MDB is not available!")
