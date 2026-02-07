@@ -1,62 +1,63 @@
+import logging
+from uuid import UUID
+
 import discord
+from discord import app_commands
 from discord.ext import commands
 
-from database.stats.StatsDatabase import collectCommandStats
-from modules.TZBot import TZBot
-from shared import Types
-from shared.Helpers import Helpers
+from dtypes import UInt64
+from modules import TZBot
+from shared import VERIFY_CODE_LEN
 
+log = logging.getLogger(__name__)
 
 class TzLink(commands.Cog):
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-    @discord.slash_command(name="link", description="Links you to your Minecraft account.")
-    @collectCommandStats
-    async def link(this, ctx: discord.ApplicationContext, code: discord.Option(str, "Code that was generated for you in Minecraft.")) -> bool:
+    @app_commands.command(name="link", description="Links you to your Minecraft account.")
+    @app_commands.describe(code="Code that was generated for you in Minecraft.")
+    async def link(this, ctx: discord.Interaction, code: app_commands.Range[str, VERIFY_CODE_LEN, VERIFY_CODE_LEN]) -> None:
         if code not in this.client.linkCodes:
+            log.warning(f"{ctx.user.name} tried to link themselves with an invalid code!")
             embed = await this.client.getFail(description="There's no such code! Maybe it expired?", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
-
-        testUuid = await this.client.db.getUUIDByUserId(ctx.user.id)
+            return
         
-        testId = None
-        if testUuid and Types.isUUID(testUuid):
-            testId = await this.client.db.getUserIdByUUID(testUuid)
+        testId = UInt64(0)
+        if testUuid := await this.client.db.getUUIDFromUserId(UInt64(ctx.user.id)):
+            testId = await this.client.db.getUserIdFromUUID(testUuid)
 
-        if testUuid and testId and int(testId) == ctx.user.id:
+        if testUuid and testId() == ctx.user.id:
+            log.warning(f"{ctx.user.name} is already linked to {str(testUuid)}!")
             embed = await this.client.getFail(description="Your account is already linked!", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
+            return
 
-        entry: tuple[str, str] = this.client.linkCodes.pop(code)
+        entry: tuple[UUID, str] = this.client.linkCodes.pop(code)
         embed = await this.client.getSuccess(description=f"Your Discord account has been successfully linked with `{entry[0]}`!", user=ctx.user)
         await ctx.response.send_message(embed=embed, ephemeral=True)
 
-        await this.client.db.assignUUIDToUserId(entry[0], ctx.user.id, entry[1])
-        return True
+        await this.client.db.assignUUIDToUserId(entry[0], UInt64(ctx.user.id), entry[1])
+        return
 
-    @discord.slash_command(name="unlink", description="Unlinks your Minecraft account.")
-    @collectCommandStats
-    async def unlink(this, ctx: discord.ApplicationContext) -> bool:
-        testUuid = await this.client.db.getUUIDByUserId(ctx.user.id)
+    @app_commands.command(name="unlink", description="Unlinks your Minecraft account.")
+    async def unlink(this, ctx: discord.Interaction) -> None:
+        testId = UInt64(0)
+        if testUuid := await this.client.db.getUUIDFromUserId(UInt64(ctx.user.id)):
+            testId = await this.client.db.getUserIdFromUUID(testUuid)
 
-        testId = None
-        if testUuid and Types.isUUID(testUuid):
-            testId = await this.client.db.getUserIdByUUID(testUuid)
-
-        if not (testUuid and testId) or int(testId) != ctx.user.id:
+        if not testUuid or testId() != ctx.user.id:
+            log.warning(f"{ctx.user.name} isn't linked to any account!")
             embed = await this.client.getFail(description="There's nothing to unlink!", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
+            return
 
         embed = await this.client.getSuccess(description="Your Discord account has been successfully unlinked!", user=ctx.user)
         await ctx.response.send_message(embed=embed, ephemeral=True)
 
-        await this.client.db.unassignUUIDFromUserId(ctx.user.id)
-        return True
+        await this.client.db.unassignUUIDFromUserId(UInt64(ctx.user.id))
 
 
-def setup(client: TZBot) -> None:
-    client.add_cog(TzLink(client))
+async def setup(client: TZBot) -> None:
+    await client.add_cog(TzLink(client))

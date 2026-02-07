@@ -1,28 +1,33 @@
 import datetime
+import logging
+from typing import Optional, ClassVar
 
 import discord
 import pytz
+from discord import app_commands
 from discord.ext import commands
 
-from database.stats.StatsDatabase import collectCommandStats
-from modules.TZBot import TZBot
-from shared.Constants import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST
-from shell.Logger import Logger
+from dtypes.Types import UInt64
+from modules import TZBot
+from shared import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST, MAX_TIMESTAMP
 
+log = logging.getLogger(__name__)
 
 class TzCommands(commands.Cog):
-    timezoneGroup = discord.SlashCommandGroup(name="timezone", description="Timezone related stuff")
+    TIMEZONE_GROUP: ClassVar[app_commands.Group] = app_commands.Group(name="timezone", description="Timezone related stuff")
+    UNIX_GROUP: ClassVar[app_commands.Group] = app_commands.Group(name="unix", description="Unix timestamp related stuff")
+    DATETIME_STR_FORMAT: ClassVar[str] = "%Y-%m-%d %H:%M:%S"
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-    async def getTimezones(this, ctx: discord.AutocompleteContext) -> list[str]:
-        result: list[str] = []
+    async def getTimezones(this, ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        result: list[app_commands.Choice[str]] = []
 
-        cityMatches = [f"{tz['area']}/{tz['city']}" for tz in TIMEZONES if
-                       str(tz.get("city", "")).lower().startswith(ctx.value.lower())]
-        areaMatches = [f"{tz['area']}/{tz['city']}" for tz in TIMEZONES if
-                       str(tz.get("area", "")).lower().startswith(ctx.value.lower())]
+        cityMatches = [app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}") for tz in TIMEZONES if
+                       str(tz.get("city", "")).lower().startswith(current.lower())]
+        areaMatches = [app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}") for tz in TIMEZONES if
+                       str(tz.get("area", "")).lower().startswith(current.lower())]
 
         if len(cityMatches) > MAX_SHOWABLE_RESULTS:
             return cityMatches[:MAX_SHOWABLE_RESULTS]
@@ -32,96 +37,176 @@ class TzCommands(commands.Cog):
 
         return result
 
-    @timezoneGroup.command(name="set", description="Sets your timezone to the correct one.")
-    @collectCommandStats
-    async def tzSet(
-        this,
-        ctx: discord.ApplicationContext,
-        timezone: discord.Option(str, "The timezone you are in.", autocomplete=getTimezones),
-        tzalias: discord.Option(str, "Alias with which other people will get your time.", required=False, default=None),
-    ) -> bool:
-        if tzalias is None:
-            tzalias = ctx.user.name
-
+    @TIMEZONE_GROUP.command(name="set", description="Sets your timezone to the correct one.")
+    @app_commands.describe(timezone="The timezone you are in.")
+    @app_commands.autocomplete(timezone=getTimezones)
+    async def tzSet(this, ctx: discord.Interaction, timezone: str) -> None:
         if timezone not in TIMEZONE_CHECK_LIST:
-            Logger.error(f"{ctx.user} tried to set their timezone to {timezone}.")
-            await ctx.response.send_message("Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", ephemeral=True)
-            return False
+            log.error(f"{ctx.user.name} tried to set their timezone to {timezone}.")
+            embed = await this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
 
-        if await this.client.db.setTimezone(ctx.user.id, timezone, tzalias):
+        elif await this.client.db.setTimezone(UInt64(ctx.user.id), timezone):
             embed = await this.client.getSuccess(user=ctx.user)
-            Logger.success(f"{ctx.user} set their timezone to {timezone}!")
+            log.info(f"{ctx.user.name} set their timezone to {timezone}!")
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return True
         else:
+            log.error(f"Failed to set timezone for user {ctx.user.name} to {timezone}!")
             embed = await this.client.getFail(user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
 
-    @timezoneGroup.command(name="show", description="Shows you timezone you set.")
-    @collectCommandStats
-    async def tzGet(this, ctx: discord.ApplicationContext) -> bool:
-        res: str | None = await this.client.db.getTimeZone(ctx.user.id)
-
-        if not res:
+    @TIMEZONE_GROUP.command(name="show", description="Shows you timezone you set.")
+    async def tzGet(this, ctx: discord.Interaction) -> None:
+        if not (res := await this.client.db.getTimezoneFromUserId(UInt64(ctx.user.id))):
+            log.error(f"Failed to get timezone for user {ctx.user.name} ({ctx.user.id}).")
             embed = await this.client.getFail(user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
         else:
             await ctx.response.send_message(f"Your timezone is {res.replace('_', ' ')}", ephemeral=True)
-            return True
 
-    @discord.slash_command(name="now", description="Shows person's time.")
-    @collectCommandStats
-    async def now(this, ctx: discord.ApplicationContext, person: discord.Option(discord.Member, "Who's time to display?")) -> bool:
-        person: discord.Member
-        try:
-            zoneName = await this.client.db.getTimeZone(person.id)
-            timezone = pytz.timezone(zoneName)
-        except pytz.exceptions.UnknownTimeZoneError:
-            embed = await this.client.getFail(description=f"{person.mention} hasn't registered with Timezone Bot yet.", user=ctx.user)
+    @app_commands.command(name="now", description="Shows person's time.")
+    @app_commands.describe(person="Whose time to display?")
+    async def now(this, ctx: discord.Interaction, person: Optional[discord.Member]) -> None:
+        if not person: person = ctx.user
+        if not (zoneName := await this.client.db.getTimezoneFromUserId(UInt64(person.id))):
+            embed = await this.client.getFail(description=f"{person.mention} hasn't registered with me yet!", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
+            return
 
+        timezone = pytz.timezone(zoneName)
         theirTime = datetime.datetime.now(timezone)
 
         utcOffset = theirTime.strftime("%z")
         formattedOffset = f"GMT{utcOffset[:3]}:{utcOffset[3:]}"
-        timeFormatted = theirTime.strftime(" ".join([
-                    f"{person.display_name}'s time: %A, %d.%m.%Y %H:%M | %m/%d/%Y %I:%M %p",
-                    f"({formattedOffset} | {zoneName.replace('_', ' ')})",
-                    f"\nYour time: <t:{int(theirTime.timestamp())}:F>",
-                ]))
 
-        await ctx.response.send_message(timeFormatted)
-        return True
+        embed = discord.Embed(
+            title=f"{person.display_name}'s time ({formattedOffset})",
+            color=discord.Color.green(),
+            description=theirTime.strftime("\n".join([
+                f"%A, %d.%m.%Y %H:%M (🇪🇺)",
+                f"%A, %m/%d/%Y %I:%M %p (🇺🇸)",
+                "",
+                f"Your time: <t:{int(theirTime.timestamp())}:F>"
+            ]))
+        )
 
-    @discord.slash_command(name="tznow", description="Shows the time in a certain timezone.")
-    @collectCommandStats
-    async def nowTz(this, ctx: discord.ApplicationContext, timezone: discord.Option(str, "Timezone to show", autocomplete=getTimezones)) -> bool:
+        await ctx.response.send_message(embed=embed)
+        return
+
+    @app_commands.command(name="tznow", description="Shows the time in a certain timezone.")
+    @app_commands.describe(timezone="Timezone to show the current time for.")
+    @app_commands.autocomplete(timezone=getTimezones)
+    async def nowTz(this, ctx: discord.Interaction, timezone: str) -> None:
         if timezone not in TIMEZONE_CHECK_LIST:
-            await ctx.response.send_message("Invalid timezone. Use [this table] (https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", ephemeral=True)
-            return False
+            log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
+            fail = this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
+            await ctx.response.send_message(embed=fail, ephemeral=True)
+            return
 
-        try:
-            zone = pytz.timezone(timezone.replace(" ", "_"))
-        except pytz.exceptions.UnknownTimeZoneError:
-            embed = await this.client.getFail(description="Timezone not found. Contact <@769924149648424990> for help.", user=ctx.user)
-            await ctx.response.send_message(embed=embed, ephemeral=True)
-            return False
+        zone = pytz.timezone(timezone.replace(" ", "_"))
 
         requestedTime = datetime.datetime.now(zone)
         utcOffset = requestedTime.strftime("%z")
         formattedOffset = f"GMT{utcOffset[:3]}:{utcOffset[3:]}"
-        timeFormatted = requestedTime.strftime(" ".join([
-                    f"Time in {timezone.split('/')[1].replace('_', ' ')}:",
-                    f"%A, %d.%m.%Y %H:%M | %m/%d/%Y %I:%M %p ({formattedOffset})",
-                    f"\nYour time: <t:{int(requestedTime.timestamp())}:F>",
-                ]))
 
-        await ctx.response.send_message(timeFormatted)
-        return True
+        embed = discord.Embed(
+            title=f"Time in {timezone.split('/')[1].replace('_', ' ')} ({formattedOffset})",
+            color=discord.Color.green(),
+            description=requestedTime.strftime("\n".join([
+                f"%A, %d.%m.%Y %H:%M (🇪🇺)",
+                f"%A, %m/%d/%Y %I:%M %p (🇺🇸)",
+                "",
+                f"Your time: <t:{int(requestedTime.timestamp())}:F>"
+            ]))
+        )
 
+        await ctx.response.send_message(embed=embed)
+        return
 
-def setup(client: TZBot) -> None:
-    client.add_cog(TzCommands(client))
+    @UNIX_GROUP.command(name="from", description="Convert a unix timestamp to time at timezone")
+    @app_commands.autocomplete(timezone=getTimezones)
+    @app_commands.describe(
+        timestamp="Timestamp you want to convert.",
+        timezone="Timezone you want to show the time at. Defaults to UTC."
+    )
+    async def unixFrom(this, ctx: discord.Interaction, timestamp: app_commands.Range[int, 0, MAX_TIMESTAMP], timezone: Optional[str] = None) -> None:
+        if timezone and timezone not in TIMEZONE_CHECK_LIST:
+            log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
+            fail = this.client.getFail(
+                description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.",
+                user=ctx.user)
+            await ctx.response.send_message(embed=fail, ephemeral=True)
+            return
+
+        tz: datetime.tzinfo = pytz.UTC
+        if timezone:
+            tz: datetime.tzinfo = pytz.timezone(timezone)
+
+        requestedTime = datetime.datetime.fromtimestamp(float(timestamp), tz)
+        utcOffset = requestedTime.strftime("%z")
+        formattedOffset = f"GMT{utcOffset[:3]}:{utcOffset[3:]}"
+
+        embed = discord.Embed(
+            title=f"Unix Timestamp to date conversion (as {formattedOffset})",
+            color=discord.Color.green(),
+            description=requestedTime.strftime("\n".join([
+                f"%A, %d.%m.%Y %H:%M (🇪🇺)",
+                f"%A, %m/%d/%Y %I:%M %p (🇺🇸)",
+                "",
+                f"Your time: <t:{int(timestamp)}:F>"
+            ]))
+        )
+
+        await ctx.response.send_message(embed=embed)
+
+    @UNIX_GROUP.command(name="to", description="Convert a time at timezone to a unix timestamp")
+    @app_commands.autocomplete(timezone=getTimezones)
+    @app_commands.describe(
+        year="Year of the date you want to convert. Defaults to the current year.",
+        month="Month of the date you want to convert. Defaults to the current month.",
+        day="Day of the date you want to convert. Defaults to the current day.",
+        hour="Hour of the date you want to convert. Defaults to the current hour.",
+        minute="Minute of the date you want to convert. Defaults to the current minute.",
+        second="Second of the date you want to convert. Defaults to the current second.",
+        timezone="Timezone the date is in. Defaults to UTC."
+    )
+    async def unixTo(this, ctx: discord.Interaction,
+                     year: app_commands.Range[int, 1970, 9999] = datetime.datetime.now().year,
+                     month: app_commands.Range[int, 1, 12] = datetime.datetime.now().month,
+                     day: app_commands.Range[int, 1, 31] = datetime.datetime.now().day,
+                     hour: app_commands.Range[int, 0, 23] = datetime.datetime.now().hour,
+                     minute: app_commands.Range[int, 0, 59] = datetime.datetime.now().minute,
+                     second: app_commands.Range[int, 0, 59] = datetime.datetime.now().second,
+                     timezone: Optional[str] = None) -> None:
+
+        if timezone and timezone not in TIMEZONE_CHECK_LIST:
+            log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
+            fail = this.client.getFail(
+                description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.",
+                user=ctx.user)
+            await ctx.response.send_message(embed=fail, ephemeral=True)
+            return
+
+        timeStr = f"{year}-{month}-{day} {hour}:{minute}:{second}"
+        requestedTime = datetime.datetime.strptime(timeStr, this.DATETIME_STR_FORMAT)
+        tz: datetime.tzinfo = pytz.UTC
+        if timezone:
+            tz = pytz.timezone(timezone)
+
+        requestedTime = tz.localize(requestedTime, False)
+        utcOffset = requestedTime.strftime("%z")
+        formattedOffset = f"GMT{utcOffset[:3]}:{utcOffset[3:]}"
+        embed = discord.Embed(
+            title=f"Date to Unix Timestamp conversion (as {formattedOffset})",
+            color=discord.Color.green(),
+            description=requestedTime.strftime("\n".join([
+                f"Inputted date: <t:{int(requestedTime.timestamp())}:F>",
+                f"Result: `{int(requestedTime.timestamp())}`"
+            ]))
+        )
+
+        await ctx.response.send_message(embed=embed)
+        return
+
+async def setup(client: TZBot) -> None:
+    await client.add_cog(TzCommands(client))

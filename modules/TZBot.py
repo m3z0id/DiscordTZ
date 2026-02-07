@@ -2,44 +2,41 @@ import asyncio
 import contextlib
 import copy
 import datetime
-import json
-import re
+import logging
 import tarfile
 import time
 from copy import deepcopy
-from pathlib import Path
-from typing import Final, AsyncGenerator
+from typing import Final, Optional
+from uuid import UUID
 
+import aiohttp
 import discord
 import geoip2
 import maxminddb.errors
-from aiohttp import ClientSession, BasicAuth, ClientResponseError
-from discord import ExtensionAlreadyLoaded, ExtensionFailed, ExtensionNotFound, ExtensionNotLoaded, NoEntryPointError, \
-    User, Option, SlashCommand
-from discord.ext import bridge
-from discord.ext.bridge import BridgeSlashCommand
-from discord.ext.commands import errors
+from aiohttp import BasicAuth, ClientResponseError
+from discord import User
+from discord.ext import commands
+from discord.ext.commands import ExtensionNotLoaded, ExtensionNotFound, ExtensionAlreadyLoaded, \
+    NoEntryPointError, ExtensionFailed, Context, errors
+from discord.ext.commands._types import BotT
 from geoip2 import database  # noqa: F401
 from six import BytesIO
 
-from database.APIKeyDatabase import ApiKeyDatabase
-from database.DataDatabase import Database
-from database.stats.StatsDatabase import StatsDatabase
+from database import APIKeyDatabase, DataDatabase
+from dtypes import Config, Command, UInt64, ModuleBlacklist
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
-from shared.Constants import CONFIG_FILE, GEO_IP_DB_FILE, DIALOG_OWNERS_FILE, SUCCESS, FAIL, HTTP_HEADERS, DAY_SECONDS, \
-    GEO_IP_URL, MODULES_DIR, SORRY_PATTERN, ROMANIA_PATTERN
-from shared.Helpers import Helpers
-from shared.Types import Config, Command
-from shell.Logger import Logger
+from shared import CONFIG_FILE, GEO_IP_DB_FILE, SUCCESS, FAIL, HTTP_HEADERS, DAY_SECONDS, \
+    GEO_IP_URL, MODULES_DIR, SORRY_PATTERN, ROMANIA_PATTERN, MOD_BLACKLIST_FILE
 
+log = logging.getLogger(__name__)
 
-class TZBot(bridge.Bot):
+class TZBot(commands.Bot):
     loadedModules: list[str] = []
     loadedCommands: list[Command] = []
 
+    API_SERVER_TASK: asyncio.Task
     API_SERVER: Final[APIServer]
-    API_SERVER_TASK: Final[asyncio.Task]
     API_PACKET_LOGGER: Final[ServerLogger]
 
     syncOverride: bool = False
@@ -50,37 +47,26 @@ class TZBot(bridge.Bot):
         with CONFIG_FILE.open("r") as f:
             this.config: Config = Config.schema().loads(f.read())
 
-        Helpers.tzBot = this
-
         this.ownerId = this.config.ownerId
-        this.linkCodes: dict[str, tuple[str, str]] = {}
-        this.db: Database = Database(this.config.mariadbDetails)
-        this.apiDb = ApiKeyDatabase(this.config.server.apiKeysKey)
-        if not GEO_IP_DB_FILE.parent.exists():
-            GEO_IP_DB_FILE.parent.mkdir(exist_ok=True)
-        if not GEO_IP_DB_FILE.exists():
-            GEO_IP_DB_FILE.touch(exist_ok=True)
+        this.linkCodes: dict[str, tuple[UUID, str]] = {}
+        this.db: DataDatabase = DataDatabase(this.config.mariadbDetails)
+        this.apiDb = APIKeyDatabase()
+        this.modBlacklist = ModuleBlacklist(MOD_BLACKLIST_FILE)
+
+        GEO_IP_DB_FILE.parent.mkdir(exist_ok=True, parents=True)
+        GEO_IP_DB_FILE.touch(exist_ok=True)
+
         try:
             this.maxMindDb: geoip2.database.Reader = geoip2.database.Reader(GEO_IP_DB_FILE)
         except maxminddb.errors.InvalidDatabaseError:
-            Logger.error("MaxMind DB is invalid, will fetch")
+            log.error("MaxMind DB is invalid, will fetch")
             this.syncOverride = True
-
-        this.statsDb: Final[StatsDatabase] = StatsDatabase()
-
-        if not DIALOG_OWNERS_FILE.exists():
-            DIALOG_OWNERS_FILE.touch()
-        try:
-            with DIALOG_OWNERS_FILE.open("r") as f:
-                this.dialogOwners: set[int] = set(json.loads(f.read()))
-        except json.JSONDecodeError:
-            this.dialogOwners: set[int] = set()
 
         this.API_PACKET_LOGGER = ServerLogger(this, True)
         this.API_SERVER = APIServer(this)
 
     # Command Response
-    async def getSuccess(this, *, description: str | None = None, user: discord.User | None = None) -> discord.Embed:
+    async def getSuccess(this, *, description: Optional[str] = None, user: Optional[discord.User] = None) -> discord.Embed:
         successCpy = copy.deepcopy(SUCCESS)
         successCpy.timestamp = datetime.datetime.now()
         if user:
@@ -90,7 +76,7 @@ class TZBot(bridge.Bot):
 
         return successCpy
 
-    async def getFail(this, *, description: str | None = None, user: discord.User | None = None) -> discord.Embed:
+    async def getFail(this, *, description: Optional[str] = None, user: Optional[discord.User] = None) -> discord.Embed:
         failCpy = copy.deepcopy(FAIL)
         failCpy.timestamp = datetime.datetime.now()
         if user:
@@ -100,34 +86,25 @@ class TZBot(bridge.Bot):
 
         return failCpy
 
-    # HTTP Client
-    @contextlib.asynccontextmanager
-    async def getNewClient(this, contentTypes: set[str]) -> AsyncGenerator[ClientSession]:
+    # Internet shit
+    async def downloadFile(this, url: str, contentTypes: set[str]) -> Optional[tuple[str, bytes]]:
+        log.info(f"Downloading from {url}")
         headersCpy = deepcopy(HTTP_HEADERS)
         headersCpy["Accept"] = ",".join(contentTypes)
-        session = ClientSession(headers=headersCpy)
-        try:
-            yield session
-        finally:
-            await session.close()
 
-    # Internet shit
-    async def downloadFile(this, url: str, contentTypes: set[str]) -> tuple[str, bytes] | None:
-        Logger.log(f"Downloading from {url}")
         try:
-            async with this.getNewClient(contentTypes) as session:
+            async with aiohttp.ClientSession(headers=headersCpy) as session:
                 async with session.get(url) as response:
                     if response.status == 200 and response.content_type in contentTypes:
-                        Logger.success("Download was successful!")
+                        log.info("Download was successful!")
                         return response.content_type, await response.read()
 
                     else:
-                        Logger.error(f"Download failed! Content type: {response.content_type}; Code: {response.status}")
-                        Logger.error(await response.read())
+                        log.error(f"Download failed! Content type: {response.content_type}; Code: {response.status}")
                         return None
+
         except ClientResponseError as e:
-            Logger.error(f"Download failed!")
-            Logger.error(e)
+            log.error(f"Download failed!: {e!s}")
 
     async def syncGeoIP(this):
         if not this.syncOverride:
@@ -135,18 +112,20 @@ class TZBot(bridge.Bot):
                 currentTime = time.time()
                 secondsDiff = currentTime - GEO_IP_DB_FILE.stat().st_ctime
                 if secondsDiff < DAY_SECONDS:
-                    Logger.log("Skipping GeoLite2 database download, it was updated less than 24 hours ago.")
+                    log.info("Skipping GeoLite2 database download, it was updated less than 24 hours ago.")
                     return
 
-        Logger.log("Downloading GeoLite2 database...")
-        async with this.getNewClient({"application/tar", "application/tar+gzip"}) as session:
+        log.info("Downloading GeoLite2 database...")
+        headers = copy.deepcopy(HTTP_HEADERS)
+        headers["Accept"] = ",".join({"application/tar", "application/tar+gzip"})
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(GEO_IP_URL, auth=BasicAuth(str(this.config.maxmind.accountId), this.config.maxmind.token, "utf-8")) as response:
                 if response.status == 200:
                     tarArchiveRaw = BytesIO(await response.read())
                 else:
-                    Logger.error(f"GeoIP failed! Content type: {response.content_type}; Code: {response.status}")
+                    log.error(f"GeoIP failed! Content type: {response.content_type}; Code: {response.status}")
 
-        mmdb: bytes | None = None
+        mmdb: Optional[bytes] = None
         with tarfile.open(fileobj=tarArchiveRaw, mode="r:*") as tar:
             for member in tar:
                 if member.isfile() and member.name.endswith("GeoLite2-City.mmdb"):
@@ -156,19 +135,23 @@ class TZBot(bridge.Bot):
                     break
 
         if not mmdb:
-            Logger.error("Failed to find the database file in the TAR.")
+            log.error("Failed to find the database file in the TAR.")
             return
 
         with GEO_IP_DB_FILE.open("wb") as f:
             f.write(mmdb)
 
         this.maxMindDb = geoip2.database.Reader(GEO_IP_DB_FILE)
-        Logger.success("Fresh GeoIP database fetched!")
+        log.info("Fresh GeoIP database fetched!")
 
     # WSS shit
     async def startRunning(this) -> None:
-        this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
-        await this.start(this.config.token)
+        try:
+            this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
+            await this.start(this.config.token)
+        except asyncio.CancelledError:
+            log.info("Stopping!")
+            await this.stop()
 
     async def stopRunning(this):
         await this.close()
@@ -178,31 +161,49 @@ class TZBot(bridge.Bot):
         await this.stopRunning()
         await this.API_SERVER_TASK
 
-    async def on_connect(this) -> None:
+    async def on_ready(this) -> None:
         await this.syncGeoIP()
         await this.loadCogs()
-        await this.sync_commands()
+        await this.db.asyncInit()
+        await this.apiDb.asyncInit()
+        await this.tree.sync()
 
-    async def on_application_command_error(this, ctx: discord.Interaction, error: discord.DiscordException) -> bool:
-        embed = await this.getFail(description="There was an error with the command's execution.", user=ctx.user)
-        await ctx.response.send_message(embed=embed, ephemeral=True)
-        return False
+        # actr = await this.fetch_guild(148831815984087041)
+        actr = await this.fetch_guild(1410707285373882390)
+        this.errorChannel = await this.fetch_channel(this.config.packetLogs.errorChannelId())
+        this.successChannel = await this.fetch_channel(this.config.packetLogs.successChannelId())
+        this.devlogRole = await actr.fetch_role(this.config.server.devlogRoleId())
+        this.apiThread = await actr.fetch_channel(this.config.server.apiApproveChannelId())
 
-    async def on_command_error(this, ctx: bridge.BridgeContext, exception: errors.CommandError) -> bool:
-        embed = await this.getFail(description="There was an error with the command's execution.")
-        await ctx.respond(embed=embed, ephemeral=True)
-        return False
+        log.info("Discord Bot is online!")
 
-    async def on_ready(this) -> None:
-        this.errorChannel = await this.fetch_channel(this.config.packetLogs.errorChannelId)
-        this.successChannel = await this.fetch_channel(this.config.packetLogs.successChannelId)
+    async def on_command_error(this, ctx: Context[BotT], exception: errors.CommandError, /) -> None:
+        if isinstance(exception, commands.CommandNotFound):
+            log.warning(f"{ctx.author.name} tried to run a command which doesn't exist!")
+            await ctx.reply(embed=await this.getFail(description="This command doesn't exist!", user=ctx.author))
 
-        await this.refreshCommands()
-        Logger.success("Discord Bot is online!")
+        elif isinstance(exception, commands.MissingPermissions):
+            log.warning(f"{ctx.author.name} tried to run a command without sufficient permissions! Missing perms: {", ".join(exception.missing_permissions)}")
+            await ctx.reply(embed=await this.getFail(description="You don't have sufficient permissions!", user=ctx.author))
+
+        elif isinstance(exception, commands.CommandOnCooldown):
+            log.warning(f"{ctx.author.name} tried to run a command too fast!")
+            await ctx.reply(embed=await this.getFail(description=f"Slow down! Try again in {exception.retry_after:.2f}s.", user=ctx.author))
+
+        elif isinstance(exception, commands.MissingRequiredArgument):
+            log.warning(f"{ctx.author.name} tried to run a command which requires arguments!")
+            await ctx.reply(embed=await this.getFail(description="I think you forgot some arguments to this command!", user=ctx.author))
+
+        else:
+            log.error(f"Unhandled error type: {exception.__class__.__name__}")
+            await ctx.send("An unexpected error occurred.")
 
     # is_owner override
+    def isOwner(this, userId: UInt64) -> bool:
+        return userId == this.ownerId
+
     async def is_owner(this, user: User) -> bool:
-        return user.id == this.ownerId
+        return this.isOwner(UInt64(user.id))
 
     # Modules shit
     def getAvailableModules(this) -> list[str]:
@@ -220,14 +221,13 @@ class TZBot(bridge.Bot):
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
 
             try:
-                this.unload_extension(f"modules.mod{module}")
+                await this.unload_extension(f"modules.mod{module}")
                 this.loadedModules.remove(module)
             except (ExtensionNotFound, ExtensionNotLoaded) as e:
-                Logger.error(f"Failed to unload module {module}: {e}")
+                log.error(f"Failed to unload module {module}: {e!s}")
 
-        await this.sync_commands(force=True)
-        await this.refreshCommands()
-        Logger.success(f"Module {", ".join(modules)} unloaded!")
+        await this.tree.sync()
+        log.info(f"Module {", ".join(modules)} unloaded!")
 
     async def loadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -235,14 +235,13 @@ class TZBot(bridge.Bot):
                 raise ExtensionAlreadyLoaded(f"Module {module} is loaded")
 
             try:
-                this.load_extension(f"modules.mod{module}")
+                await this.load_extension(f"modules.mod{module}")
                 this.loadedModules.append(module)
             except (ExtensionNotFound, ExtensionAlreadyLoaded, NoEntryPointError, ExtensionFailed) as e:
-                Logger.error(f"Failed to load module {module}: {e}")
+                log.error(f"Failed to load module {module}: {e!s}")
 
-        await this.sync_commands(force=True)
-        await this.refreshCommands()
-        Logger.success(f"Modules {", ".join(modules)} loaded!")
+        await this.tree.sync()
+        log.info(f"Modules {", ".join(modules)} loaded!")
 
     async def reloadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -250,43 +249,25 @@ class TZBot(bridge.Bot):
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
 
             try:
-                this.reload_extension(f"modules.mod{module}")
+                await this.reload_extension(f"modules.mod{module}")
             except (ExtensionNotFound, ExtensionNotLoaded, NoEntryPointError, ExtensionFailed) as e:
-                Logger.error(f"Failed to reload module {module}: {e}")
+                log.error(f"Failed to reload module {module}: {e!s}")
 
-        await this.sync_commands(force=True)
-        await this.refreshCommands()
-        Logger.success(f"Module {", ".join(modules)} reloaded!")
+        await this.tree.sync()
+        log.info(f"Module {", ".join(modules)} reloaded!")
 
     async def loadCogs(this) -> None:
-        this.loadedModules.extend([ext.split(".")[1][3:] for module in this.getAvailableModules() for ext in this.load_extension(f"modules.mod{module}")])
-        Logger.success(f"Modules {', '.join(this.loadedModules)} loaded!")
-
-    async def refreshCommands(this):
-        this.loadedCommands.clear()
-        for cmd in this.walk_application_commands():
-            if not isinstance(cmd, (SlashCommand, BridgeSlashCommand)):
+        this.loadedModules.extend(this.getAvailableModules())
+        for module in this.getAvailableModules():
+            if this.modBlacklist.isBlacklisted(module):
+                log.info(f"Module {module} is blacklisted, skipping!")
+                this.loadedModules.remove(module)
                 continue
 
-            name: str = cmd.qualified_name
-            description: str = cmd.description
-            cooldown: float | None = None
-            if cmd.cooldown:
-                cooldown: float | None = cmd.cooldown.per
-            checks: list = cmd.checks
-            args: list[Option] = copy.deepcopy(cmd.options)
+            await this.load_extension(f"modules.mod{module}")
 
-            if isinstance(cmd, BridgeSlashCommand):
-                cmdHelpEntry = Command("tz!", name, description, cooldown, checks, args, f"`tz!{name}`")
-            else:
-                cmdHelpEntry = Command("/", name, description, cooldown, checks, args, cmd.mention)
-            this.loadedCommands.append(cmdHelpEntry)
+        log.info(f"Modules {', '.join(this.loadedModules)} loaded!")
 
-    # Persistent UI shit
-    async def addOwner(this, userId: int) -> None:
-        this.dialogOwners.add(userId)
-        with DIALOG_OWNERS_FILE.open("w") as f:
-            f.write(json.dumps(list(this.dialogOwners)))
 
     # Verification code invalidifier
     async def removeCode(this, delay: int, code: str) -> None:
@@ -297,7 +278,7 @@ class TZBot(bridge.Bot):
     # Fun stuff
     async def on_message(this, message: discord.Message) -> None:
         await this.process_commands(message)
-        if message.author.id == this.ownerId:
+        if message.author.id == this.ownerId():
             # Canada
             if bool(SORRY_PATTERN.search(message.content)):
                 await message.reply("🇨🇦", mention_author=False)

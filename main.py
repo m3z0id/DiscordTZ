@@ -1,23 +1,43 @@
 #!/usr/bin/env python3
 import asyncio
+import logging
+import signal
 
 import discord
 
-from modules.TZBot import TZBot
-from shell.Logger import Logger
-from shell.Shell import Shell
+from modules import TZBot
+
+# Logger setup
+fileHandler = logging.FileHandler(filename="bot.log", encoding="utf-8", mode="a")
+dateFormat = "%d.%m.%Y %H:%M:%S"
+formatter = logging.Formatter("[{asctime}] [{levelname:<8}] {name}: {message}", dateFormat, style="{")
+
+fileHandler.setFormatter(formatter)
+discord.utils.setup_logging(level=logging.INFO, root=True)
+logging.getLogger().addHandler(fileHandler)
+
+log = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    shellTask = asyncio.create_task(Shell().run_async())
     client = TZBot(command_prefix="tz!", help_command=None, intents=discord.Intents.all())
-    botTask = asyncio.create_task(client.startRunning())
 
-    tasks = [shellTask, botTask]
+    stopEvent = asyncio.Event()
+    def exitHandler() -> None:
+        log.info("Received signal, stopping!")
+        stopEvent.set()
+
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, exitHandler)
+    loop.add_signal_handler(signal.SIGTERM, exitHandler)
+
+    botTask = asyncio.create_task(client.startRunning())
     try:
-        await asyncio.gather(*tasks)
-    except Exception as e:  # noqa: BLE001
-        Logger.error(f"Unhandled exception: {e}")
+        await stopEvent.wait()
+    finally:
+        await client.stop()
+        botTask.cancel()
+
 
 
 asyncio.run(main())

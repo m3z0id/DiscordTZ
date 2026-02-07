@@ -1,13 +1,13 @@
-import base64
-import json
-import random
-import string
 from enum import IntFlag
+from typing import Self, Union
 
-from shared.Helpers import Helpers
+import jwt
+
+from dtypes.Types import UInt64
+from shared import Helpers
 
 
-class ApiPermissions(IntFlag):
+class APIPermissions(IntFlag):
     DISCORD_ID = 1 << 0
   # TZBOT_ALIAS = 1 << 1
     MINECRAFT_UUID = 1 << 2
@@ -18,41 +18,35 @@ class ApiPermissions(IntFlag):
   # COMMAND_API = 1 << 7
   # IMAGE_API = 1 << 8
 
+class APIKey:
+    def __init__(this, owner: Union[UInt64, int], permissions: Union[UInt64, int], validUntil: str = "INFINITE", keyId: str = Helpers.generateCharSequence(32)) -> None:
+        if isinstance(owner, int):
+            this.owner = UInt64(owner)()
+        else:
+            this.owner = owner()
 
-class ApiKey:
-    def __init__(
-        this,
-        owner: int,
-        permissions: int,
-        validUntil: str = "INFINITE",
-        keyId: str = "".join(random.SystemRandom().choice(string.ascii_letters + string.digits) for _ in range(32)),
-    ) -> None:
-        this.owner = owner
-        this.permissions = permissions
+        if isinstance(permissions, int):
+            this.permissions = UInt64(permissions)()
+        else:
+            this.permissions = permissions()
+
         this.validUntil = validUntil
         this.keyId = keyId
 
-    def hasPermissions(this, *permissions: ApiPermissions) -> bool:
-        required = ApiPermissions(0)
+    def hasPermissions(this, *permissions: APIPermissions) -> bool:
+        required = 0
         for perm in permissions:
-            required |= perm
+            required |= perm.value  # accumulate required bits
 
-        return (ApiPermissions(this.permissions) & required) == required
+        return (this.permissions & required) == required
 
     def prettyPrintPerms(this) -> list[str]:
-        return [flag.name for flag in ApiPermissions if ApiPermissions(this.permissions) & flag and flag.name]
+        return [flag.name for flag in APIPermissions if APIPermissions(this.permissions) & flag and flag.name]
 
-    def toDbForm(this) -> str:
-        return (
-            base64.encodebytes(Helpers.AESCBCEncrypt(json.dumps(this.__dict__, separators=(",", ":")).encode(), str(Helpers.tzBot.config.server.apiKeysKey).encode()))
-            .decode()
-            .replace("\n", "")
-        )
+    def toJWT(this, key: str) -> str:
+        return jwt.encode(this.__dict__, key, algorithm="HS256")
 
     @classmethod
-    def fromDbForm(cls, dbFormKey: str):  # noqa: ANN206
-        data = json.loads(Helpers.AESCBCDecrypt(base64.decodebytes(dbFormKey.encode()), str(Helpers.tzBot.config.server.apiKeysKey).encode()))
+    def fromJWT(cls, token: str, key: str) -> Self:
+        data = jwt.decode(token, key, algorithms=["HS256"])
         return cls(**data)
-
-    def __str__(this) -> str:
-        return f"owner={this.owner}; permissions={', '.join(this.prettyPrintPerms())}({this.permissions}); validUntil={this.validUntil}"

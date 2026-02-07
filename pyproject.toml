@@ -6,25 +6,23 @@ authors = [{name="M3z0id"}]
 requires-python = ">=3.13"
 
 dependencies = [
-    "py-cord==2.6.1",
     "datetime==5.5",
     "asyncio==4.0.0",
     "cryptography==46.0.3",
     "geoip2==5.1.0",
     "pytz==2025.2",
     "requests==2.32.5",
-    "prompt_toolkit==3.0.51",
     "tzlocal==5.3.1",
     "dataclasses-json==0.6.7",
     "aiosqlite==0.21.0",
     "aiomysql==0.3.0",
     "aiofiles==24.1.0",
     "numpy==2.3.2",
-    "matplotlib==3.10.5",
     "srvresolver>=0.3.5",
     "msgpack>=1.1.2",
     "audioop-lts>=0.2.2",
-    "pycryptodome==3.23.0"
+    "discord-py>=2.6.4",
+    "pyjwt>=2.11.0",
 ]
 
 [tool.ruff]

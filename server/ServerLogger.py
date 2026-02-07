@@ -4,11 +4,9 @@ from datetime import datetime
 
 import discord
 
-from server.requests.AbstractRequests import SimpleRequest
-from server.requests.Requests import PingRequest, TimeZoneFromIPRequest, UserIdUUIDLinkPost
-from shared.Constants import MAX_DATA_EMBED_LEN
-from shared.Helpers import Helpers
-from shared.Types import PacketFlags
+from server.requests import SimpleRequest, PingRequest, TimezoneFromIPRequest, UserIdUUIDLinkPost
+from shared import Helpers, MAX_DATA_EMBED_LEN
+from dtypes import PacketFlags, ErrorCode
 
 
 class ServerLogger:
@@ -31,7 +29,7 @@ class ServerLogger:
         if warning:
             request.response = None
 
-        if not warning and isinstance(request, TimeZoneFromIPRequest):
+        if not warning and isinstance(request, TimezoneFromIPRequest):
             request.data["ip"] = "<redacted>"
 
         if not warning and isinstance(request, UserIdUUIDLinkPost) and request.response.code == ErrorCode.OK.code:

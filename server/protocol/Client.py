@@ -1,16 +1,19 @@
 from ipaddress import IPv4Address
 
-from shared.Helpers import Helpers
-from shared.Types import PacketFlags, Port, isPort
+from shared import Helpers
+from dtypes import UInt16, PacketFlags
 
 
 class Client:
+    ip: IPv4Address
+    port: UInt16
+    aesKey: bytes
+    flags: PacketFlags
+    server: "APIServer"
+
     def __init__(this, ipAddress: tuple[str, int], aesKey: bytes, flags: PacketFlags, server: "APIServer") -> None:
         this.ip: IPv4Address = IPv4Address(ipAddress[0])
-        if not isPort(ipAddress[1]):
-            raise ValueError("Invalid port")
-
-        this.port: Port = Port(ipAddress[1])
+        this.port = UInt16(ipAddress[1])
         this.aesKey = aesKey
         this.flags = flags
         this.server = server

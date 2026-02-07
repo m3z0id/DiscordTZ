@@ -1,39 +1,42 @@
 import asyncio
 import io
+import logging
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Final
+from typing import Final, Coroutine, Any, Union
 
 import discord
 from PIL import Image
-from discord.ext import commands, bridge
+from discord import app_commands
+from discord.ext import commands
 
-from database.stats.StatsDatabase import collectCommandStats
-from modules.TZBot import TZBot
-from shared.Constants import IMAGE_CONTENT_TYPES, CHROMA_EXEC_FILE, VALID_COLOR_SPACES
-from shell.Logger import Logger
+from modules import TZBot
+from shared import IMAGE_CONTENT_TYPES, CHROMA_EXEC_FILE, VALID_COLOR_SPACES, TEMP_IMAGES_DIR, URL_PATTERN, \
+    EMOJI_PATTERN
+from dtypes import ColorSpace
 
+log = logging.getLogger(__name__)
 
 class Chroma(commands.Cog):
     COMMAND_LOCK: Final[asyncio.Semaphore] = asyncio.Semaphore(3)
     outputtedImages: set[Path] = {}
 
-    def __init__(this, client: TZBot):
+    def __init__(this, client: TZBot) -> None:
         this.client = client
 
         if not CHROMA_EXEC_FILE.is_file():
-            Logger.warning(f"Chroma executable not found at {CHROMA_EXEC_FILE}")
+            log.warning(f"Chroma executable not found at {CHROMA_EXEC_FILE}")
 
-    async def cleanup(this):
+    async def cleanup(this) -> None:
         for _ in this.outputtedImages:
             _.unlink()
 
         this.outputtedImages.clear()
         this.COMMAND_LOCK.release()
 
-    async def runChroma(this, imgPath: Path, colorspace: str, modifications: str) -> BytesIO:
-        outputted = Path(this.TEMP_IMAGES_PATH / f"{imgPath.stem}MODIFIED.bmp")
+    async def runChroma(this, imgPath: Path, colorspace: ColorSpace, modifications: str) -> BytesIO:
+        outputted = Path(TEMP_IMAGES_DIR / f"{imgPath.stem}MODIFIED.bmp")
         process = await asyncio.create_subprocess_exec(
             CHROMA_EXEC_FILE.absolute(), "-f", f"{imgPath.parent}/{imgPath.name}", "-o", f"{outputted.parent}/{outputted.name}",
             f"--{colorspace}", modifications,
@@ -43,7 +46,7 @@ class Chroma(commands.Cog):
 
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            Logger.error(f"{imgPath.name} failed with return code {process.returncode}")
+            log.error(f"{imgPath.name} failed with return code {process.returncode}")
             raise RuntimeError("Bad modifier arguments.")
 
         this.outputtedImages.add(outputted)
@@ -62,7 +65,7 @@ class Chroma(commands.Cog):
 
     async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, bytes]]:
         images: set[tuple[str, bytes]] = set()
-        for match in re.finditer(this.URL_REGEX, msg.content):
+        for match in re.finditer(URL_PATTERN, msg.content):
             url = match.group(0)
             response = await this.client.downloadFile(url, IMAGE_CONTENT_TYPES)
             if response: images.add(response)
@@ -86,7 +89,7 @@ class Chroma(commands.Cog):
     async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
         images: set[tuple[str, bytes]] = set()
 
-        for match in re.finditer(this.EMOJI_PATTERN, msg.content):
+        for match in re.finditer(EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
             emojiUrl = f"https://cdn.discordapp.com/emojis/{emojiId}"
             response = await this.client.downloadFile(emojiUrl, IMAGE_CONTENT_TYPES)
@@ -94,27 +97,32 @@ class Chroma(commands.Cog):
 
         return images
 
-    @bridge.bridge_command(name="chroma", description="Modify image using \"filters\"!")
-    @collectCommandStats
-    async def chroma(this, ctx: bridge.BridgeContext, colorspace: bridge.BridgeOption(str, f"Filter's colorspace ({", ".join(VALID_COLOR_SPACES)})", choices=VALID_COLOR_SPACES), modifications: bridge.BridgeOption(str, f"The filter itself (format: <channel>:(modifier)<value|channel>))")) -> bool:
-        if not isinstance(ctx, bridge.BridgeExtContext):
-            await ctx.respond("Slash version isn't implemented yet. Please, use the prefixed version instead.", ephemeral=True)
+    @commands.hybrid_command(name="chroma", description="Modify image using \"filters\"!")
+    @app_commands.choices(colorspace=[app_commands.Choice(name=choice, value=choice) for choice in VALID_COLOR_SPACES])
+    @app_commands.describe(
+        colorspace=f"Filter's colorspace ({", ".join(VALID_COLOR_SPACES)})",
+        modifications=f"The filter itself (format: <channel>:(modifier)<value|channel>))"
+    )
+    async def chroma(this, ctx: commands.Context, colorspace: ColorSpace, modifications: str) -> None:
+        if ctx.interaction:
+            await ctx.interaction.response.send_message("Slash version isn't implemented yet. Please, use the prefixed version instead.", ephemeral=True)
 
         if not CHROMA_EXEC_FILE.is_file():
-            await ctx.respond("This feature is disabled.")
+            await ctx.reply("This feature is disabled.")
+            return
 
         await ctx.defer()
         if this.COMMAND_LOCK.locked():
-            await ctx.respond("Please wait before other command finishes!")
-            return False
+            await ctx.reply("Please wait before other command finishes!")
+            return
 
-        if colorspace.lower() not in this.VALID_COLOR_SPACES:
-            await ctx.respond(f"Please enter valid color space! [{"|".join(this.VALID_COLOR_SPACES)}]")
-            return False
+        if colorspace.lower() not in VALID_COLOR_SPACES:
+            await ctx.reply(f"Please enter valid color space! [{"|".join(VALID_COLOR_SPACES)}]")
+            return
 
         if not modifications:
-            await ctx.respond("Please specify modifications!")
-            return False
+            await ctx.reply("Please specify modifications!")
+            return
 
         await this.COMMAND_LOCK.acquire()
         imagesToProcess: set[tuple[str, bytes]] = set()
@@ -132,37 +140,30 @@ class Chroma(commands.Cog):
 
         if not imagesToProcess:
             this.COMMAND_LOCK.release()
-            return False
+            return
 
-        # Ran as slash command
-        elif isinstance(ctx, bridge.BridgeApplicationContext):
-            embed = await this.client.getFail(description="Command is unsupported as slash command. Please use the legacy version.", user=ctx.user)
-            await ctx.respond(embed=embed, ephemeral=True)
-            this.COMMAND_LOCK.release()
-            return False
-
-        tasks = set()
-        this.TEMP_IMAGES_PATH.mkdir(parents=True, exist_ok=True)
+        tasks: set[Coroutine[Any, Any, BytesIO]] = set()
+        TEMP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         for i, image in enumerate(imagesToProcess):
-            currentImgPath: Path = this.TEMP_IMAGES_PATH / f"{i}.bmp"
+            currentImgPath: Path = TEMP_IMAGES_DIR / f"{i}.bmp"
             pic = Image.open(io.BytesIO(image[1]))
             pic.convert("RGBA").save(currentImgPath)
             tasks.add(this.runChroma(currentImgPath, colorspace, modifications))
 
-        results: list[BaseException | BytesIO] = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[Union[BaseException, BytesIO]] = await asyncio.gather(*tasks, return_exceptions=True)
         for res in results:
             if isinstance(res, BaseException):
-                Logger.error(res.args)
+                log.error(res.args)
                 results.remove(res)
-                await ctx.respond("There's an error in your modifier filter.")
+                await ctx.reply("There's an error.")
                 await this.cleanup()
-                return False
+                return
 
         results: list[BytesIO]
 
-        await ctx.respond(f"**[i]** Images converted!", files=[discord.File(file, filename=f"{idx}.png") for idx, file in enumerate(results)])
+        await ctx.reply(f"**[i]** Images converted!", files=[discord.File(file, filename=f"{idx}.png") for idx, file in enumerate(results)])
         await this.cleanup()
-        return True
+        return
 
-def setup(client: TZBot):
-    client.add_cog(Chroma(client))
+async def setup(client: TZBot):
+    await client.add_cog(Chroma(client))

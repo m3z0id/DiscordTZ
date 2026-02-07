@@ -1,37 +1,35 @@
 import asyncio
 import json
+import logging
 import struct
 from asyncio import Server, IncompleteReadError
 from json import JSONDecodeError
-from typing import Final, TypedDict, NotRequired
+from typing import Final, Optional
 
 from cryptography.exceptions import InvalidTag
 
-from server.protocol.Client import Client
-from server.protocol.TCP import TCPClient
-from server.protocol.UDP import UDPProtocol
-from server.requests.AbstractRequests import SimpleRequest
-from server.requests.Requests import PingRequest, TimeZoneRequest, TimeZoneFromIPRequest, UserIdUUIDLinkPost, \
-    TimezoneFromUUIDRequest, IsLinkedRequest, UserIDFromUUIDRequest, UUIDFromUserIDRequest
-from shared.Helpers import Helpers
-from shared.Types import APIPayload, PacketFlags
-from shell.Logger import Logger
+from server.protocol import Client, TCPClient, UDPProtocol
+from server.requests import SimpleRequest, PingRequest, TimezoneFromUserIdRequest, TimezoneFromIPRequest, UserIdUUIDLinkPost, \
+    TimezoneFromUUIDRequest, IsLinkedRequest, UserIdFromUUIDRequest, UUIDFromUserIdRequest
+from shared import Helpers
+from dtypes import APIPayload, PacketFlags, UInt8
 
+log = logging.getLogger(__name__)
 
 class APIServer:
-    TCP_SERVER: Final[Server]
-    UDP_SERVER: Final[UDPProtocol]
+    TCP_SERVER: Server
+    UDP_SERVER: UDPProtocol
     _STOP_EVENT: Final[asyncio.Event]
 
     REQUEST_TYPES: Final[list[type[SimpleRequest]]] = [
         PingRequest,
-        TimeZoneRequest,
-        TimeZoneFromIPRequest,
+        TimezoneFromUserIdRequest,
+        TimezoneFromIPRequest,
         UserIdUUIDLinkPost,
         TimezoneFromUUIDRequest,
         IsLinkedRequest,
-        UserIDFromUUIDRequest,
-        UUIDFromUserIDRequest
+        UserIdFromUUIDRequest,
+        UUIDFromUserIdRequest
     ]
 
     transport: asyncio.DatagramTransport
@@ -43,45 +41,42 @@ class APIServer:
         this.aesKey: bytes = this.serverConfig.aesKey.encode()
         this._STOP_EVENT = asyncio.Event()
 
-    def getRequestType(this, index: int) -> type[SimpleRequest]:
+    def getRequestType(this, index: UInt8) -> type[SimpleRequest]:
         try:
-            return this.REQUEST_TYPES[index]
+            return this.REQUEST_TYPES[index()]
         except IndexError:
             return SimpleRequest
 
 
     async def start(this) -> None:
-        this.TCP_SERVER = await asyncio.start_server(this.TCPReceived, "0.0.0.0", int(this.serverConfig.port))
+        this.TCP_SERVER = await asyncio.start_server(this.TCPReceived, "0.0.0.0", this.serverConfig.port())
         this.UDP_SERVER = UDPProtocol(this)
 
         loop = asyncio.get_running_loop()
-        transport, *_ = await loop.create_datagram_endpoint(lambda: this.UDP_SERVER, local_addr=("0.0.0.0", int(this.serverConfig.port)))
+        transport, *_ = await loop.create_datagram_endpoint(lambda: this.UDP_SERVER, local_addr=("0.0.0.0", this.serverConfig.port()))
         this.transport = transport
 
-        Logger.success("Server running!")
-        try:
-            await this._STOP_EVENT.wait()
-        finally:
-            Logger.log("Server shutting down!")
+        log.info("Server running!")
+        await this._STOP_EVENT.wait()
+        log.info("Server shutting down!")
 
     async def stop(this):
         this.TCP_SERVER.close()
         this.UDP_SERVER.close()
         this._STOP_EVENT.set()
 
-    async def respondToInvalid(this, msg: bytes, client: Client):
+    async def respondToInvalid(this, msg: bytes, client: Client) -> None:
         if isinstance(client, TCPClient):
             protocol = "TCP"
         else:
             protocol = "UDP"
 
-        Logger.log(f"Got an invalid {protocol} request: {msg}")
+        log.warning(f"Got an invalid {protocol} request: {msg}")
         fakeJson: dict = {"requestType": "INVALID", "data": {"message": msg}}
         fakeJsonData: dict = fakeJson.pop("data")
 
         request = SimpleRequest(client, fakeJson, fakeJsonData, this.tzBot)
         await request.process()
-        return
 
     async def TCPReceived(this, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
@@ -109,10 +104,10 @@ class APIServer:
             client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
             await this.processRequest(msg, client)
         except IncompleteReadError as e:
-            Logger.error(f"Didn't get enough bytes to check for header! {e!s}")
+            log.warning(f"Didn't get enough bytes to check for header! {e!s}")
             writer.close()
 
-    async def parsePacketInfo(this, msg: bytes) -> APIPayload | None:
+    async def parsePacketInfo(this, msg: bytes) -> Optional[APIPayload]:
         tLetter, zLetter, *payload = struct.unpack(">BBBBBH", msg[0:7])
         if tLetter != ord("t") or zLetter != ord("z") or len(payload) != 4 or payload[0] < 7 or payload[-1] + payload[0] > len(msg):
             return None
@@ -120,30 +115,26 @@ class APIServer:
         return APIPayload.fromTuple(payload)
 
     async def processRequest(this, msg: bytes, client: Client) -> None:
-        await this.tzBot.statsDb.addReceivedDataBandwidth(len(msg))
-
         if isinstance(client, TCPClient):
             protocol: str = "TCP"
         else:
             protocol: str = "UDP"
 
-        await this.tzBot.statsDb.addProtocol(protocol)
-
-        payload: APIPayload | None = await this.parsePacketInfo(msg)
+        payload: Optional[APIPayload] = await this.parsePacketInfo(msg)
         if not payload:
             await this.respondToInvalid(msg, client)
             return
 
         client.flags = payload.flags
-        header = msg[:payload.dataOffset]
-        content = msg[payload.dataOffset:payload.contentLen + payload.dataOffset]
+        header = msg[:payload.dataOffset()]
+        content = msg[payload.dataOffset():payload.contentLen() + payload.dataOffset()]
 
         appliedFlags = []
 
         # Process flags
         if payload.flags & PacketFlags.AESGCM and payload.flags & PacketFlags.CHACHAPOLY:
-            Logger.error("Used more encryption algorithms!")
-            client.flags = 0
+            log.warning("Used more encryption algorithms!")
+            client.flags.value = 0
             await this.respondToInvalid(content, client)
             return
 
@@ -160,15 +151,15 @@ class APIServer:
                 appliedFlags.append("unencrypted")
 
         except InvalidTag:
-            Logger.error("Request with invalid tag, rejecting!")
-            client.flags = 0
+            log.error("Request with invalid tag, rejecting!")
+            client.flags.value = 0
             await this.respondToInvalid(content, client)
             return
 
         if payload.flags & PacketFlags.GUNZIP:
             decompressed = Helpers.unGzip(content)
             if not decompressed:
-                client.flags = 0
+                client.flags.value = 0
                 await this.respondToInvalid(msg, client)
                 return
             content = decompressed
@@ -177,7 +168,7 @@ class APIServer:
         if payload.flags & PacketFlags.MSGPACK:
             unpacked = Helpers.msgpackToJson(content)
             if not unpacked:
-                client.flags = 0
+                client.flags.value = 0
                 await this.respondToInvalid(msg, client)
                 return
             content = unpacked
@@ -188,7 +179,7 @@ class APIServer:
         try:
             jsonRequest: dict = json.loads(content.decode("utf-8", errors="ignore"))
         except (JSONDecodeError, TypeError):
-            client.flags = 0
+            client.flags.value = 0
             await this.respondToInvalid(content, client)
             return
 
@@ -196,10 +187,9 @@ class APIServer:
         payload: dict = jsonRequest.pop("data", {})
 
         if reqType != SimpleRequest:
-            Logger.log(f"Got a known {protocol}, {", ".join(appliedFlags)} request: {content.decode()}")
+            log.info(f"Got a known {protocol}, {", ".join(appliedFlags)} request: {content.decode()}")
             request = reqType(client, jsonRequest, payload, this.tzBot)
             await request.process()
 
-            await this.tzBot.statsDb.addEstablishedKnownRequestType(request.packetNameStringRepr())
         else:
             await this.respondToInvalid(content, client)

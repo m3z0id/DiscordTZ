@@ -1,24 +1,26 @@
+import logging
+
 import discord
-from Crypto.Random import random as rand
+from discord import app_commands
 from discord.ext import commands
 
-from database.stats.StatsDatabase import collectCommandStats
-from modules.TZBot import TZBot
-from shared.Constants import BMPGEN_EXEC_FILE, MAGICK_EXEC_FILE, COLORLIST_FILE
-from shared.Helpers import Helpers
-from shell.Logger import Logger
+from modules import TZBot
+from shared import BMPGEN_EXEC_FILE, MAGICK_EXEC_FILE, COLORLIST_FILE
+from shared import Helpers
+from dtypes import UInt8
 
+log = logging.getLogger(__name__)
 
 class ImageGen(commands.Cog):
-    colorSet: set[tuple[int, int, int]]
+    colorSet: set[tuple[UInt8, UInt8, UInt8]]
 
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
         if not BMPGEN_EXEC_FILE.is_file():
-            Logger.warning(f"BMPGen executable not found at {BMPGEN_EXEC_FILE}")
+            log.warning(f"BMPGen executable not found at {BMPGEN_EXEC_FILE}")
         if not MAGICK_EXEC_FILE.is_file():
-            Logger.warning(f"ImageMagick executable not found at {MAGICK_EXEC_FILE}")
+            log.warning(f"ImageMagick executable not found at {MAGICK_EXEC_FILE}")
 
         if not COLORLIST_FILE.is_file():
             this.colorSet = set()
@@ -26,66 +28,64 @@ class ImageGen(commands.Cog):
         else:
             with COLORLIST_FILE.open("rb") as f:
                 data = f.read()
-                this.colorSet = {(data[i], data[i + 1], data[i + 2]) for i in range(0, len(data), 3)}
+                this.colorSet = {(UInt8(data[i]), UInt8(data[i + 1]), UInt8(data[i + 2])) for i in range(0, len(data), 3)}
 
-    @discord.slash_command(name="generate", description="Generate an image using math!")
+    @app_commands.command(name="generate", description="Generate an image using math!")
     @commands.cooldown(1, 10, commands.BucketType.user)
-    @collectCommandStats
-    async def generate(
-        this,
-        ctx: discord.ApplicationContext,
-        r: discord.Option(str, "Math expression for red") = "0",
-        g: discord.Option(str, "Math expression for green") = "0",
-        b: discord.Option(str, "Math expression for blue") = "0",
-    ) -> bool:
-        resp = await Helpers.generateImage(r, g, b)
-        if not resp[0]:
-            embed = await this.client.getFail(description="An error occured. Please try again.", user=ctx.user)
+    @app_commands.describe(
+        r="Math expression used for red",
+        g="Math expression used for green",
+        b="Math expression for blue"
+    )
+    async def generate(this, ctx: discord.Interaction, r: str = "0", g: str = "0", b: str = "0") -> None:
+        if not (resp := await Helpers.generateImage(r, g, b)):
+            log.error("Image generation failed!")
+            embed = await this.client.getFail(description="An error occurred. Please try again.", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
             ctx.command.reset_cooldown(ctx)
-            return False
+            return
 
-        file = discord.File(resp[1], filename="pattern.png")
+        file = discord.File(resp, filename="pattern.png")
         await ctx.response.send_message("Here's your picture!", file=file)
-        return True
 
-    @discord.slash_command(name="color", description="Generate a random unique (or not unique) color! Uses crypto random")
+    @app_commands.command(name="color", description="Generate a random unique (or not unique) color! Uses crypto random")
     @commands.cooldown(1, 3, commands.BucketType.user)
-    @collectCommandStats
-    async def color(this, ctx: discord.ApplicationContext) -> bool:
+    async def color(this, ctx: discord.Interaction) -> None:
         if not (BMPGEN_EXEC_FILE.is_file() and MAGICK_EXEC_FILE.is_file()):
-            await ctx.respond("This feature is disabled.")
+            await ctx.response.send_message("This feature is disabled.", ephemeral=True)
+            return
 
-        color: tuple[int, int, int] = (rand.randint(0, 255), rand.randint(0, 255), rand.randint(0, 255))
-        fileOutput = color[0].to_bytes(1, byteorder="little") + color[1].to_bytes(1, byteorder="little") + color[2].to_bytes(1, byteorder="little")
+        color: tuple[UInt8, UInt8, UInt8] = (UInt8(Helpers.generateRandomNum(UInt8.MASK)), UInt8(Helpers.generateRandomNum(UInt8.MASK)), UInt8(Helpers.generateRandomNum(UInt8.MASK)))
+        fileOutput = color[0]().to_bytes(1, byteorder="little") + color[1]().to_bytes(1, byteorder="little") + color[2]().to_bytes(1, byteorder="little")
 
-        resp = await Helpers.generateImage(str(color[0]), str(color[1]), str(color[2]))
-        if not resp[0]:
-            embed = await this.client.getFail(description="An error occured. Please try again.", user=ctx.user)
+        if not (resp := await Helpers.generateImage(str(color[0]), str(color[1]), str(color[2]))):
+            log.error("Image generation failed!")
+
+            embed = await this.client.getFail(description="An error occurred. Please try again.", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
             ctx.command.reset_cooldown(ctx)
-            return False
 
-        file = discord.File(resp[1], filename="color.png")
+            return
+
+        file = discord.File(resp, filename="color.png")
         if color not in this.colorSet:
             await ctx.response.send_message(
-                " ".join([f"**#{format(color[0], '02x')}{format(color[1], '02x')}{format(color[2], '02x')}** is", "your random unique color!"]),
+                " ".join([f"**#{format(color[0](), '02x')}{format(color[1](), '02x')}{format(color[2](), '02x')}** is", "your random unique color!"]),
                 file=file,
             )
 
             this.colorSet.add(color)
-            with COLORLIST_FILE.open("ab") as writer:
-                writer.write(fileOutput)
+            with COLORLIST_FILE.open("ab") as f:
+                f.write(fileOutput)
+
 
         else:
-            await ctx.response.send_message( " ".join([
-                        f"**#{format(color[0], '02x')}{format(color[1], '02x')}{format(color[2], '02x')}**",
+            await ctx.response.send_message(" ".join([
+                        f"**#{format(color[0], '02x')}{format(color[1](), '02x')}{format(color[2](), '02x')}**",
                         f"was already generated by someone. Duplicate after **{len(this.colorSet)}** total tries. That's",
                         f"~**{str((len(this.colorSet) * 100) / (256**3)).replace('.', ',')} %** chance! How unlucky! (or lucky?)",
                     ]), file=file)
 
-        return True
 
-
-def setup(client: TZBot) -> None:
-    client.add_cog(ImageGen(client))
+async def setup(client: TZBot) -> None:
+    await client.add_cog(ImageGen(client))

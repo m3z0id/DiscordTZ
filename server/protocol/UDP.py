@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
-from asyncio import Queue
-from typing import Final
+from asyncio import Queue, DatagramTransport
+from typing import Final, Optional
 
-from server.protocol.Client import Client
-from shared.Types import PacketFlags
+from server.protocol import Client
+from dtypes import PacketFlags
 
 
 class UDPClient(Client):
@@ -14,7 +14,7 @@ class UDPClient(Client):
 
     async def send(this, data: bytes) -> None:
         finalData = await this._applyFlags(data)
-        this.transport.sendto(finalData, (this.ip, this.port))
+        this.transport.sendto(finalData, (str(this.ip), this.port()))
 
 
 class UDPProtocol(asyncio.DatagramProtocol):
@@ -22,12 +22,12 @@ class UDPProtocol(asyncio.DatagramProtocol):
 
     def __init__(this, server: "APIServer") -> None:  # noqa: ANN001
         this.server = server
-        this.transport: asyncio.transports.DatagramTransport | None = None
+        this.transport: Optional[DatagramTransport] = None
         this.requestQueue: Queue[tuple[bytes, UDPClient]] = Queue()
 
         this._STOP_EVENT = asyncio.Event()
 
-    def connection_made(this, transport: asyncio.transports.DatagramTransport) -> None:
+    def connection_made(this, transport: DatagramTransport) -> None:
         this.transport = transport
 
     def datagram_received(this, data: bytes, addr: tuple[str, int]) -> None:

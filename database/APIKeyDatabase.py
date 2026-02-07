@@ -1,68 +1,66 @@
-import asyncio
+import logging
+from typing import Optional
 
-import aiosqlite
+from database.abstract.SQLiteSource import SQLiteSource
+from shared import API_KEYS_DB_FILE
+from dtypes import UInt64
 
-from shell.Logger import Logger
+log = logging.getLogger(__name__)
 
+class APIKeyDatabase:
+    sqlite: SQLiteSource
+    
+    def __init__(this) -> None:
+        this.sqlite = SQLiteSource(API_KEYS_DB_FILE)
 
-class ApiKeyDatabase:
-    def __init__(this, apiKeysKey: str) -> None:
-        this.encryptionKey = apiKeysKey
-        asyncio.create_task(this._postInit())
-
-    async def _postInit(this) -> None:
-        this.conn = await aiosqlite.connect("dbFiles/apiKeys.db")
-        await this.conn.execute(
-            """CREATE TABLE IF NOT EXISTS pendingApiKeys
-               (
-                   base64repr TEXT PRIMARY KEY NOT NULL,
-                   messageId  BIGINT           NOT NULL
-               );
+    async def asyncInit(this) -> None:
+        statements: list[str] = [
+            """
+            CREATE TABLE IF NOT EXISTS pendingApiKeys (
+                jwt TEXT PRIMARY KEY NOT NULL,
+                messageId BIGINT NOT NULL
+            );
             """,
-            (),
-        )
-        await this.conn.execute("""CREATE TABLE IF NOT EXISTS apiKeys
-                             (
-                                 base64repr TEXT PRIMARY KEY NOT NULL
-                             );""")
+            """
+            CREATE TABLE IF NOT EXISTS apiKeys (
+                jwt TEXT PRIMARY KEY NOT NULL
+            );
+            """
+        ]
 
-        await this.conn.commit()
+        await this.sqlite.asyncInit(statements)
 
-    async def addToPending(this, apiKey: str, messageId: int) -> None:
-        query = "INSERT INTO pendingApiKeys (base64repr, messageId) VALUES (?, ?)"
-        await this.conn.execute(query, (apiKey, messageId))
-        await this.conn.commit()
+    async def addKeyToPending(this, apiKey: str, msgId: UInt64) -> None:
+        async with this.sqlite.getConn() as conn:
+            await conn.execute("INSERT INTO pendingApiKeys (jwt, messageId) VALUES (?, ?)", (apiKey, msgId()))
+            await conn.commit()
 
-    async def moveToReal(this, apiKey: str) -> None:
-        query = "SELECT * FROM pendingApiKeys WHERE base64repr = ?"
-        cursor = await this.conn.execute(query, (apiKey,))
-        row = await cursor.fetchone()
+    async def makeKeyValid(this, apiKey: str) -> None:
+        async with this.sqlite.getConn() as conn:
+            cur = await conn.execute("DELETE FROM pendingApiKeys WHERE jwt = ?", (apiKey,))
+            await conn.commit()
 
-        if not row:
-            Logger.error("Could not find API key to move to.")
-            return
+            if cur.rowcount < 0:
+                log.error("Could not find API key to move to.")
+                return
 
-        query = "INSERT INTO apiKeys VALUES (?)"
-        await cursor.execute(query, (row[0],))
-        await cursor.connection.commit()
+            await conn.execute("INSERT INTO apiKeys (jwt) VALUES (?)", (apiKey,))
+            await conn.commit()
 
-        query = "DELETE FROM pendingApiKeys WHERE base64repr = ?"
-        await cursor.execute(query, (apiKey,))
-        await cursor.connection.commit()
+    async def getPendingKeyByMsgId(this, msgId: UInt64) -> Optional[str]:
+        async with this.sqlite.getConn() as conn:
+            cur = await conn.execute("SELECT jwt FROM pendingApiKeys WHERE messageId = ?", (msgId(),))
+            rows = await cur.fetchone()
+            return rows[0] if rows and hasattr(rows, "__getitem__") else None
 
-    async def getRequestByMsgId(this, msgId: int) -> str:
-        query = "SELECT base64repr FROM pendingApiKeys WHERE messageId = ?"
+    async def denyKey(this, msgId: UInt64) -> None:
+        async with this.sqlite.getConn() as conn:
+            await conn.execute("DELETE FROM pendingApiKeys WHERE messageId = ?", (msgId(),))
+            await conn.commit()
 
-        cursor = await this.conn.execute(query, (msgId,))
-        return (await cursor.fetchone())[0]
+    async def isKeyValid(this, apiKey: str) -> bool:
+        async with this.sqlite.getConn() as conn:
+            cur = await conn.execute("SELECT EXISTS(SELECT 1 FROM apiKeys WHERE jwt = ?)", (apiKey,))
+            rows = await cur.fetchone()
 
-    async def flushRequest(this, apiKey: str) -> None:
-        query = "DELETE FROM pendingApiKeys WHERE base64repr = ?"
-        cursor = await this.conn.execute(query, (apiKey,))
-        await cursor.connection.commit()
-
-    async def isValidKey(this, apiKey: str) -> bool:
-        query = "SELECT EXISTS(SELECT 1 FROM apiKeys WHERE base64repr = ?)"
-
-        cursor = await this.conn.execute(query, (apiKey,))
-        return (await cursor.fetchone())[0]
+            return rows[0] if rows and hasattr(rows, "__getitem__") else False

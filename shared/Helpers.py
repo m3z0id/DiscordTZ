@@ -1,72 +1,76 @@
 import asyncio
 import gzip
-import ipaddress
 import json
+import logging
 import os
-import random
+import secrets
 import string
 import tempfile
+import zlib
 from io import BytesIO
 from pathlib import Path
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar, Optional
 
+import discord
 import msgpack
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad, unpad
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+from msgpack import ExtraData, FormatError, StackError
 
-from shared.Constants import MAGICK_EXEC_FILE, BMPGEN_EXEC_FILE, HOSTS_PATTERN, HOSTS_FILE, HOSTNAME_FILE, ZONEINFO_DIR
-from shell.Logger import Logger
+from dtypes import UInt64
+from shared import MAGICK_EXEC_FILE, BMPGEN_EXEC_FILE, HOSTS_PATTERN, HOSTS_FILE, HOSTNAME_FILE
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
-class Helpers:
-    tzBot: "TZBot" = None
+log = logging.getLogger(__name__)
 
+class Helpers:
     @staticmethod
-    async def getHosts() -> dict[str, str]:
+    async def getHosts() -> Optional[dict[str, str]]:
         try:
             with HOSTS_FILE.open("r") as f:
                 content = f.read()
         except FileNotFoundError:
-            Logger.error("Hosts file not found.")
-            return {}
+            log.fatal("Hosts file not found.")
+            return None
         except PermissionError:
-            Logger.error("Permission denied when trying to read /etc/hosts.")
-            return {}
+            log.fatal("Permission denied when trying to read /etc/hosts.")
+            return None
 
         return dict(HOSTS_PATTERN.findall(content))
 
     @staticmethod
     async def getCountryOrHost(request: "SimpleRequest") -> str:
-        hosts: dict[str, str] = await Helpers.getHosts()
+        hosts: Optional[dict[str, str]] = await Helpers.getHosts()
 
         if request.city:
             return request.city.country.iso_code
 
-        if request.client.ip.address == "127.0.0.1":
+        if request.client.ip.is_loopback:
             with HOSTNAME_FILE.open("r") as f:
                 return f.read().capitalize()
 
-        return hosts.get(request.client.ip.address, "Local").capitalize()
+        if not hosts:
+            return "Unknown"
+
+        return hosts.get(str(request.client.ip), "Local").capitalize()
 
     @staticmethod
-    async def isLocalSubnet(ip: str) -> bool:
-        try:
-            return ipaddress.ip_address(ip).is_private
-        except ValueError:
-            return False
+    def generateRandomNum(maximum: int, minimum: int = 0) -> int:
+        if maximum < minimum:
+            raise ValueError("Maximum cannot be smaller than minimum!")
+
+        return secrets.randbelow(maximum - minimum) + minimum
 
     @staticmethod
-    async def generateCharSequence(n: int) -> str:
-        return "".join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(n))
+    def generateCharSequence(n: int) -> str:
+        return "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
     @staticmethod
-    async def generateImage(r: str, g: str, b: str) -> tuple[bool, BytesIO]:
+    async def generateImage(r: str, g: str, b: str) -> Optional[BytesIO]:
         if not BMPGEN_EXEC_FILE.is_file() or not MAGICK_EXEC_FILE.is_file():
-            Logger.error("BMPGen or ImageMagick is not present!")
-            return False, BytesIO(b"")
+            log.error("BMPGen or ImageMagick is not present!")
+            return None
 
         with tempfile.TemporaryDirectory() as tempDir:
             tempPath = Path(tempDir)
@@ -79,11 +83,8 @@ class Helpers:
             stdout, stderr = await bmpGen.communicate()
 
             if bmpGen.returncode != 0:
-                Logger.error(f"There was an error generating BMP image. Return code: {bmpGen.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
-                Logger.error(f"Red: {r}")
-                Logger.error(f"Green: {g}")
-                Logger.error(f"Blue: {b}")
-                return False, BytesIO(b"")
+                log.error(f"There was an error generating BMP image. Return code: {bmpGen.returncode}")
+                return None
 
             magick = await asyncio.create_subprocess_exec(
                 MAGICK_EXEC_FILE.absolute(),
@@ -100,41 +101,18 @@ class Helpers:
             stdout, stderr = await magick.communicate()
 
             if magick.returncode != 0:
-                Logger.error(f"There was an error with conversion from BMP to PNG. Return code: {magick.returncode}; stderr: {stderr.decode('utf-8', errors='ignore')}")
-                return False, BytesIO(b"")
+                log.error(f"There was an error with conversion from BMP to PNG. Return code: {magick.returncode}")
+                return None
 
             outputPng = tempPath / "output.png"
             if outputPng.exists():
                 with outputPng.open("rb") as f:
-                    return True, BytesIO(f.read())
+                    return BytesIO(f.read())
             
-            return False, BytesIO(b"")
-
-
-    @staticmethod
-    def AESCBCDecrypt(msg: bytes, key: bytes) -> bytes | None:
-        iv = msg[:16]
-        data = msg[16:]
-
-        try:
-            cipher = AES.new(key, AES.MODE_CBC, iv=iv)
-            decryptedData = cipher.decrypt(data)
-            decryptedData = unpad(decryptedData, AES.block_size)
-            return decryptedData.strip()
-        except ValueError:
             return None
 
     @staticmethod
-    def AESCBCEncrypt(message: bytes, key: bytes) -> bytes:
-        iv = os.urandom(16)
-        cipher = AES.new(key, AES.MODE_CBC, iv=iv)
-
-        paddedMessage = pad(message, AES.block_size)
-        encryptedMessage = cipher.encrypt(paddedMessage)
-        return iv + encryptedMessage
-
-    @staticmethod
-    def AESDecrypt(msg: bytes, key: bytes, additional: bytes | None = None) -> bytes:
+    def AESDecrypt(msg: bytes, key: bytes, additional: Optional[bytes] = None) -> bytes:
         iv = msg[:12]
         ciphertext = msg[12:]
 
@@ -142,14 +120,14 @@ class Helpers:
         return cipher.decrypt(iv, ciphertext, additional)
 
     @staticmethod
-    def AESEncrypt(msg: bytes, key: bytes, additional: bytes | None = None) -> bytes:
+    def AESEncrypt(msg: bytes, key: bytes, additional: Optional[bytes] = None) -> bytes:
         iv = os.urandom(12)
         cipher = AESGCM(key)
 
         return iv + cipher.encrypt(iv, msg, additional)
 
     @staticmethod
-    def ChaCha20Decrypt(msg: bytes, key: bytes, additional: bytes | None = None) -> bytes:
+    def ChaCha20Decrypt(msg: bytes, key: bytes, additional: Optional[bytes] = None) -> bytes:
         iv = msg[:12]
         ciphertext = msg[12:]
 
@@ -157,17 +135,18 @@ class Helpers:
         return cipher.decrypt(iv, ciphertext, additional)
 
     @staticmethod
-    def ChaCha20Encrypt(msg: bytes, key: bytes, additional: bytes | None = None) -> bytes:
+    def ChaCha20Encrypt(msg: bytes, key: bytes, additional: Optional[bytes]= None) -> bytes:
         iv = os.urandom(12)
         cipher = ChaCha20Poly1305(key)
 
         return iv + cipher.encrypt(iv, msg, additional)
 
     @staticmethod
-    def unGzip(msg: bytes) -> bytes | None:
+    def unGzip(msg: bytes) -> Optional[bytes]:
         try:
             return gzip.decompress(msg)
-        except Exception:
+        except zlib.error as e:
+            log.error(f"Error while unzipping payload: {e!s}")
             return None
 
     @staticmethod
@@ -175,14 +154,19 @@ class Helpers:
         return gzip.compress(msg)
 
     @staticmethod
-    def msgpackToJson(msg: bytes) -> bytes | None:
+    def msgpackToJson(msg: bytes) -> Optional[bytes]:
         try:
             obj = msgpack.unpackb(msg, raw=False)
             return json.dumps(obj).encode()
-        except Exception:
+        except (ExtraData, FormatError, StackError, ValueError) as e:
+            log.error(f"Error while unpacking from MSGPack: {e!s}")
             return None
 
     @staticmethod
     def jsonToMsgpack(msg: bytes) -> bytes:
         obj = json.loads(msg.decode())
         return msgpack.packb(obj)
+
+
+def isOwner(ctx: discord.Interaction) -> bool:
+    return ctx.client.isOwner(UInt64(ctx.user.id))
