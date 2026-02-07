@@ -31,12 +31,11 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, exitHandler)
     loop.add_signal_handler(signal.SIGTERM, exitHandler)
 
-    botTask = asyncio.create_task(client.startRunning())
+    asyncio.create_task(client.startRunning())
     try:
         await stopEvent.wait()
     finally:
-        await client.stop()
-        botTask.cancel()
+        exit(0)
 
 
 

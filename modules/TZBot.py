@@ -123,7 +123,8 @@ class TZBot(commands.Bot):
                 if response.status == 200:
                     tarArchiveRaw = BytesIO(await response.read())
                 else:
-                    log.error(f"GeoIP failed! Content type: {response.content_type}; Code: {response.status}")
+                    log.error(f"GeoIP failed! Content type: {response.content_type}; Code: {response.status}; {await response.read()}")
+                    return
 
         mmdb: Optional[bytes] = None
         with tarfile.open(fileobj=tarArchiveRaw, mode="r:*") as tar:
@@ -146,35 +147,23 @@ class TZBot(commands.Bot):
 
     # WSS shit
     async def startRunning(this) -> None:
-        try:
-            this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
-            await this.start(this.config.token)
-        except asyncio.CancelledError:
-            log.info("Stopping!")
-            await this.stop()
+        this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
+        await this.start(this.config.token)
 
-    async def stopRunning(this):
-        await this.close()
-
-    async def stop(this):
-        await this.API_SERVER.stop()
-        await this.stopRunning()
-        await this.API_SERVER_TASK
 
     async def on_ready(this) -> None:
         await this.syncGeoIP()
         await this.loadCogs()
         await this.db.asyncInit()
         await this.apiDb.asyncInit()
-        await this.tree.sync()
 
-        # actr = await this.fetch_guild(148831815984087041)
-        actr = await this.fetch_guild(1410707285373882390)
+        actr = await this.fetch_guild(148831815984087041)
         this.errorChannel = await this.fetch_channel(this.config.packetLogs.errorChannelId())
         this.successChannel = await this.fetch_channel(this.config.packetLogs.successChannelId())
         this.devlogRole = await actr.fetch_role(this.config.server.devlogRoleId())
         this.apiThread = await actr.fetch_channel(this.config.server.apiApproveChannelId())
 
+        await this.tree.sync()
         log.info("Discord Bot is online!")
 
     async def on_command_error(this, ctx: Context[BotT], exception: errors.CommandError, /) -> None:

@@ -30,6 +30,9 @@ class LimitedInt:
     def __int__(this):
         return this._val
 
+    def __str__(this):
+        return str(this._val)
+
     def __eq__(this, other: Self) -> bool:
         return this._val == other._val
 

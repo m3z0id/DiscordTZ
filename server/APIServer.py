@@ -17,9 +17,8 @@ from dtypes import APIPayload, PacketFlags, UInt8
 log = logging.getLogger(__name__)
 
 class APIServer:
-    TCP_SERVER: Server
+    TCP_SERVER: Server = None
     UDP_SERVER: UDPProtocol
-    _STOP_EVENT: Final[asyncio.Event]
 
     REQUEST_TYPES: Final[list[type[SimpleRequest]]] = [
         PingRequest,
@@ -39,7 +38,6 @@ class APIServer:
         this.db = tzBot.db
         this.serverConfig = tzBot.config.server
         this.aesKey: bytes = this.serverConfig.aesKey.encode()
-        this._STOP_EVENT = asyncio.Event()
 
     def getRequestType(this, index: UInt8) -> type[SimpleRequest]:
         try:
@@ -57,13 +55,6 @@ class APIServer:
         this.transport = transport
 
         log.info("Server running!")
-        await this._STOP_EVENT.wait()
-        log.info("Server shutting down!")
-
-    async def stop(this):
-        this.TCP_SERVER.close()
-        this.UDP_SERVER.close()
-        this._STOP_EVENT.set()
 
     async def respondToInvalid(this, msg: bytes, client: Client) -> None:
         if isinstance(client, TCPClient):

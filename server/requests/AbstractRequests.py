@@ -58,11 +58,12 @@ class SimpleRequest:
         except geoip2.errors.AddressNotFoundError:
             this.city = None
 
-    @autoRespond
     async def process(this) -> None:
         if this.city and this.city.country.iso_code in BLACKLISTED_COUNTRIES:
             this.response = ErrorCode.BAD_GEOLOC
-            return
+
+        if this.__class__.__name__ == "SimpleRequest":
+            await this.respond()
 
     async def respond(this) -> None:
         await sendResponse(this)
