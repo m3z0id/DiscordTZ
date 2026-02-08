@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 class Chroma(commands.Cog):
     COMMAND_LOCK: Final[asyncio.Semaphore] = asyncio.Semaphore(3)
-    outputtedImages: set[Path] = {}
+    outputtedImages: set[Path] = set()
 
     def __init__(this, client: TZBot) -> None:
         this.client = client

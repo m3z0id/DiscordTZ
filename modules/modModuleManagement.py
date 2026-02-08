@@ -77,7 +77,7 @@ class ModuleManagement(commands.GroupCog, group_name="modules", group_descriptio
         log.info(f"{ctx.user.name} unloaded {modulename}!")
 
         embed = await this.client.getSuccess(description=f"Module {modulename} unloaded!", user=ctx.user)
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        await ctx.followup.send(embed=embed, ephemeral=True)
         return
 
     @app_commands.command(name="reload", description="Reloads a specific module.")
@@ -96,7 +96,7 @@ class ModuleManagement(commands.GroupCog, group_name="modules", group_descriptio
         log.info(f"{ctx.user.name} reloaded {modulename}!")
 
         embed = await this.client.getSuccess(description=f"Module {modulename} reloaded!", user=ctx.user)
-        await ctx.response.send_message(embed=embed, ephemeral=True)
+        await ctx.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="blacklist", description="Blacklists a module.")
     @app_commands.autocomplete(modulename=getAllModules)
