@@ -201,7 +201,7 @@ class UserIdFromUUIDRequest(UUIDRequest):
                 this.response = ErrorCode.NOT_FOUND
             else:
                 this.response = ErrorCode.OK
-                this.response.message = userId
+                this.response.message = userId()
 
 
 class UUIDFromUserIdRequest(UserIdRequest):
@@ -222,4 +222,4 @@ class UUIDFromUserIdRequest(UserIdRequest):
                 this.response = ErrorCode.NOT_FOUND
             else:
                 this.response = ErrorCode.OK
-                this.response.message = uid
+                this.response.message = str(uid)

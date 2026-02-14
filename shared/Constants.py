@@ -15,7 +15,7 @@ TEMP_IMAGES_DIR: Final[Path] = Path("temp/")
 
 HOSTS_FILE: Final[Path] = Path("/etc/hosts")
 HOSTNAME_FILE: Final[Path] = Path("/etc/hostname")
-FONT_FILE: Final[Path] = Path("additionalConfigs/Monocraft.ttc")
+FONT_FILE: Final[Path] = Path("state/Monocraft.ttf")
 CONFIG_FILE: Final[Path] = Path("config.json")
 GEO_IP_DB_FILE: Final[Path] = Path("state/GeoLite2-City.mmdb")
 COLORLIST_FILE: Final[Path] = Path("state/colorlist.bin")

@@ -178,7 +178,7 @@ class APIServer:
         payload: dict = jsonRequest.pop("data", {})
 
         if reqType != SimpleRequest:
-            log.info(f"Got a known {protocol}, {", ".join(appliedFlags)} request: {content.decode()}")
+            log.info(f"Got a known {protocol}, {", ".join(appliedFlags)} {reqType.__class__} request: {content.decode()}")
             request = reqType(client, jsonRequest, payload, this.tzBot)
             await request.process()
 

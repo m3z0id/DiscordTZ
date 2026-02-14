@@ -127,7 +127,7 @@ class MariaDBConfig:
     user: str
     password: str
     host: str
-    port: UInt16 = field(metadata=LimitedIntCoder(UInt16))
+    port: int = field(metadata=LimitedIntCoder(UInt16))
     autocommit: bool
 
 

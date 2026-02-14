@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import warnings
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import aiomysql
+import pymysql
 from aiomysql.utils import _PoolContextManager
 
 from dtypes import MariaDBConfig
@@ -14,31 +16,28 @@ class MDBSource:
     def __init__(this, config: MariaDBConfig) -> None:
         this.config = config
         this._initialized = False
-        this._pool: _PoolContextManager
+        this._pool: aiomysql.Pool
 
     @asynccontextmanager
     async def getConn(this) -> AsyncGenerator[aiomysql.Connection]:
-        if not this._initialized:
+        if not this._pool:
             raise RuntimeError("MDB is not initialized!")
-        conn = await this._pool.acquire()
-        try:
+
+        async with this._pool.acquire() as conn:
             yield conn
-        finally:
-            await conn.close()
 
     async def asyncInit(this, statements: list[str]) -> None:
         if this._initialized: return
         try:
-            this._pool = await aiomysql.create_pool(
-                **this.config.__dict__,
-                loop=asyncio.get_event_loop()
-            )
+            this._pool = await aiomysql.create_pool(**this.config.__dict__)
         except Exception as e:
             log.fatal(f"MDB is not available! {e!s}")
             return
 
-        async with this.getConn() as conn, conn.cursor() as cur:
-            for statement in statements:
-                await cur.execute(statement)
-
         this._initialized = True
+        async with this.getConn() as conn, conn.cursor() as cur:
+            try:
+                for statement in statements:
+                    await cur.execute(statement)
+            except pymysql.OperationalError as e:
+                warnings.warn(f"Failed to execute query: {e!s}")
