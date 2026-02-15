@@ -139,6 +139,41 @@ class UserIdUUIDLinkPost(APIRequest):
                 this.response.message = this.code
 
 
+class TimezoneAdjustRequest(APIRequest):
+    uuid: Optional[UUID]
+    timezone: Optional[str]
+
+    def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
+        super().__init__(client, headers, data, tzBot, APIPermissions.UUID_POST)
+        this.timezone = this.data.get("timezone")
+        try:
+            this.uuid = UUID(this.data.get("uuid"))
+        except ValueError:
+            this.uuid = None
+
+    @override
+    def packetNameStringRepr(this) -> str:
+        return "TIMEZONE_ADJUSTMENT"
+
+    @override
+    @autoRespond
+    async def process(this) -> None:
+        await super().process()
+
+        if not this.response:
+            if not this.uuid:
+                this.response = ErrorCode.BAD_REQUEST
+                this.response.message = "Invalid UUID"
+
+            if this.timezone not in TIMEZONE_CHECK_LIST or not await this.tzBot.db.getUserIdFromUUID(this.uuid):
+                this.response = ErrorCode.NOT_FOUND
+
+            else:
+                this.response = ErrorCode.INTERNAL_SERVER_ERROR
+                if await this.tzBot.db.setTimezoneUUID(this.uuid, this.timezone):
+                    this.response = ErrorCode.OK
+
+
 class TimezoneFromUUIDRequest(UUIDRequest):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
         super().__init__(client, headers, data, tzBot, APIPermissions.MINECRAFT_UUID)

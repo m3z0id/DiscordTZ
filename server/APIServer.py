@@ -2,17 +2,18 @@ import asyncio
 import json
 import logging
 import struct
-from asyncio import Server, IncompleteReadError
+from asyncio import Server
 from json import JSONDecodeError
 from typing import Final, Optional
 
 from cryptography.exceptions import InvalidTag
 
-from server.protocol import Client, TCPClient, UDPProtocol
-from server.requests import SimpleRequest, PingRequest, TimezoneFromUserIdRequest, TimezoneFromIPRequest, UserIdUUIDLinkPost, \
-    TimezoneFromUUIDRequest, IsLinkedRequest, UserIdFromUUIDRequest, UUIDFromUserIdRequest
-from shared import Helpers
 from dtypes import APIPayload, PacketFlags, UInt8
+from server.protocol import Client, TCPClient, UDPProtocol
+from server.requests import SimpleRequest, PingRequest, TimezoneFromUserIdRequest, TimezoneFromIPRequest, \
+    UserIdUUIDLinkPost, \
+    TimezoneFromUUIDRequest, IsLinkedRequest, UserIdFromUUIDRequest, UUIDFromUserIdRequest, TimezoneAdjustRequest
+from shared import Helpers
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ class APIServer:
         TimezoneFromUUIDRequest,
         IsLinkedRequest,
         UserIdFromUUIDRequest,
-        UUIDFromUserIdRequest
+        UUIDFromUserIdRequest,
+        TimezoneAdjustRequest
     ]
 
     transport: asyncio.DatagramTransport

@@ -141,3 +141,10 @@ The server responds with a JSON object (or MsgPack map) wrapped in the Response 
 *   **Description**: Retrieves the Minecraft UUID associated with a Discord User ID.
 *   **Request Data**: `{"userId": <val>}`
 *   **Response**: UUID (string) or `404`.
+ 
+### 8. Update Timezone
+*   **ID**: `8`
+*   **Permissions**: `UUID_POST` (8)
+*   **Description**: Updates UUID's timezone to the specified one.
+*   **Request Data**: `{"uuid": <val1>, "timezone": <val2>}`
+*   **Response**: `200` if modification was successful, `404` if UUID was not found, `500` if the change failed.
