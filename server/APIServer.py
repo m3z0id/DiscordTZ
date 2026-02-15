@@ -72,30 +72,12 @@ class APIServer:
     async def TCPReceived(this, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
         try:
-            magic = await reader.readexactly(2)
-            if magic != b"tz":
-                rest = magic + await reader.read(65535)
-                await this.respondToInvalid(rest, client)
-                return
+            req = await reader.read(65535)
+            await this.respondToInvalid(req, client)
+            return
 
-            headerLen = int.from_bytes(await reader.readexactly(1), "big")
-            rest = await reader.readexactly(headerLen)
-
-            header = magic + headerLen.to_bytes(1, "big") + rest
-
-            if len(header) < 7:
-                writer.close()
-                return
-
-            bodyLen = int.from_bytes(header[5:7], "big")
-            body = await reader.readexactly(bodyLen)
-
-            msg = header + body
-
-            client: TCPClient = TCPClient(reader, writer, this.aesKey, this)
-            await this.processRequest(msg, client)
-        except IncompleteReadError as e:
-            log.warning(f"Didn't get enough bytes to check for header! {e!s}")
+        except Exception as e:
+            log.warning(f"TCP Exception: {e!s}")
             writer.close()
 
     async def parsePacketInfo(this, msg: bytes) -> Optional[APIPayload]:
