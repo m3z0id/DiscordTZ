@@ -109,7 +109,7 @@ class APIServer:
         # Process flags
         if payload.flags & PacketFlags.AESGCM and payload.flags & PacketFlags.CHACHAPOLY:
             log.warning("Used more encryption algorithms!")
-            client.flags.value = 0
+            client.flags = 0
             await this.respondToInvalid(content, client)
             return
 
@@ -127,14 +127,14 @@ class APIServer:
 
         except InvalidTag:
             log.error("Request with invalid tag, rejecting!")
-            client.flags.value = 0
+            client.flags = 0
             await this.respondToInvalid(content, client)
             return
 
         if payload.flags & PacketFlags.GUNZIP:
             decompressed = Helpers.unGzip(content)
             if not decompressed:
-                client.flags.value = 0
+                client.flags = 0
                 await this.respondToInvalid(msg, client)
                 return
             content = decompressed
@@ -143,7 +143,7 @@ class APIServer:
         if payload.flags & PacketFlags.MSGPACK:
             unpacked = Helpers.msgpackToJson(content)
             if not unpacked:
-                client.flags.value = 0
+                client.flags = 0
                 await this.respondToInvalid(msg, client)
                 return
             content = unpacked
@@ -152,9 +152,15 @@ class APIServer:
             appliedFlags.append("JSON")
 
         try:
-            jsonRequest: dict = json.loads(content.decode("utf-8", errors="ignore"))
+            jsonRequest: Optional[dict] = json.loads(content.decode("utf-8", errors="ignore"))
+            log.info(jsonRequest)
         except (JSONDecodeError, TypeError):
-            client.flags.value = 0
+            client.flags = 0
+            await this.respondToInvalid(content, client)
+            return
+
+        if jsonRequest is None:  # empty dict is falsy, explicit null check
+            client.flags = 0
             await this.respondToInvalid(content, client)
             return
 
@@ -162,8 +168,8 @@ class APIServer:
         payload: dict = jsonRequest.pop("data", {})
 
         if reqType != SimpleRequest:
-            log.info(f"Got a known {protocol}, {", ".join(appliedFlags)} {reqType.__class__} request: {content.decode()}")
             request = reqType(client, jsonRequest, payload, this.tzBot)
+            log.info(f"Got a known {protocol}, {", ".join(appliedFlags)} {request.packetNameStringRepr()} request: {content.decode()}")
             await request.process()
 
         else:

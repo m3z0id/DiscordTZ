@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import asyncio
 import logging
 import signal
@@ -20,6 +21,11 @@ log = logging.getLogger(__name__)
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--api-only", action="store_true", help="Run in API-only mode.")
+
+    args = parser.parse_args()
+
     client = TZBot(command_prefix="tz!", help_command=None, intents=discord.Intents.all())
 
     stopEvent = asyncio.Event()
@@ -31,12 +37,10 @@ async def main() -> None:
     loop.add_signal_handler(signal.SIGINT, exitHandler)
     loop.add_signal_handler(signal.SIGTERM, exitHandler)
 
-    asyncio.create_task(client.startRunning())
+    asyncio.create_task(client.startRunning(apiOnly=args.api_only))
     try:
         await stopEvent.wait()
     finally:
         exit(0)
-
-
 
 asyncio.run(main())

@@ -28,7 +28,7 @@ class Client:
         if this.flags & PacketFlags.GUNZIP:
             data = Helpers.compressGzip(data)
 
-        if this.flags & PacketFlags.CHACHAPOLY or this.flags | PacketFlags.AESGCM:
+        if (this.flags & PacketFlags.CHACHAPOLY) or (this.flags & PacketFlags.AESGCM):
             header += int(len(data) + 28).to_bytes(2, "big", signed=False)
             if this.flags & PacketFlags.CHACHAPOLY:
                 data = Helpers.ChaCha20Encrypt(data, this.aesKey, header)

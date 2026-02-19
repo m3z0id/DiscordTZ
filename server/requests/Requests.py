@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from ipaddress import IPv4Address, AddressValueError
 from typing import override, Optional
 from uuid import UUID
@@ -13,6 +14,7 @@ from server.requests import autoRespond, UserIdRequest, APIRequest, UUIDRequest,
 from shared import Helpers, TIMEZONE_CHECK_LIST
 from dtypes import ErrorCode
 
+log = logging.getLogger(__name__)
 
 class TimezoneFromUserIdRequest(UserIdRequest):
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
@@ -170,8 +172,10 @@ class TimezoneAdjustRequest(APIRequest):
 
             else:
                 this.response = ErrorCode.INTERNAL_SERVER_ERROR
-                if await this.tzBot.db.setTimezoneUUID(this.uuid, this.timezone):
+                if result := await this.tzBot.db.setTimezoneUUID(this.uuid, this.timezone):
                     this.response = ErrorCode.OK
+
+                log.info(f"DB: {result}")
 
 
 class TimezoneFromUUIDRequest(UUIDRequest):

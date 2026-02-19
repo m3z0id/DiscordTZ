@@ -3,7 +3,7 @@ from uuid import UUID
 
 from database.abstract.MDBSource import MDBSource
 from database.abstract.SQLiteSource import SQLiteSource
-from dtypes import MariaDBConfig
+from dtypes import MariaDBConfig, UInt8
 from dtypes import UInt64
 from shared import DB_FILE
 
@@ -48,35 +48,39 @@ class DataDatabase:
         ]
         await this.mdb.asyncInit(mdbStatements)
 
-    async def setTimezone(this, userId: UInt64, timezone: str) -> bool:
+    async def setTimezone(this, userId: UInt64, timezone: str) -> UInt8:
         sqliteQuery = "INSERT INTO timezones (user, timezone) VALUES (?, ?) ON CONFLICT DO UPDATE SET timezone = ?"
-        mdbQuery = "INSERT INTO timezones (user, timezone) VALUES (%s, %s) ON DUPLICATE KEY UPDATE timezones = VALUES(timezone)"
+        mdbQuery = "INSERT INTO timezones (user, timezone) VALUES (%s, %s) ON DUPLICATE KEY UPDATE timezone = VALUES(timezone)"
 
         result: int = 0
         async with this.sqlite.getConn() as conn:
             cur = await conn.execute(sqliteQuery, (userId(), timezone, timezone))
+            await conn.commit()
             result |= cur.rowcount != 0
 
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(mdbQuery, (userId(), timezone))
+            await conn.commit()
             result |= cur.rowcount != 0 << 1
 
-        return result == 0b11
+        return UInt8(0b11)
 
-    async def setTimezoneUUID(this, uuid: UUID, timezone: str) -> bool:
+    async def setTimezoneUUID(this, uuid: UUID, timezone: str) -> UInt8:
         sqliteQuery = "UPDATE timezones SET timezone = ? WHERE uuid = ?"
         mdbQuery = sqliteQuery.replace("?", "%s")
 
         result: int = 0
         async with this.sqlite.getConn() as conn:
-            cur = await conn.execute(sqliteQuery, (str(uuid), timezone))
+            cur = await conn.execute(sqliteQuery, (timezone, str(uuid)))
+            await conn.commit()
             result |= cur.rowcount != 0
 
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
-            await cur.execute(mdbQuery, (str(uuid), timezone))
+            await cur.execute(mdbQuery, (timezone, str(uuid)))
+            await conn.commit()
             result |= cur.rowcount != 0 << 1
 
-        return result == 0b11
+        return UInt8(result)
 
     async def getTimezoneFromUserId(this, userId: UInt64) -> Optional[str]:
         sqliteQuery = "SELECT timezone from timezones WHERE user = ?"
@@ -113,10 +117,12 @@ class DataDatabase:
         result: int = 0
         async with this.sqlite.getConn() as conn:
             cur = await conn.execute(sqliteQuery, (userId(), str(uuid), timezone, str(uuid)))
+            await conn.commit()
             result |= cur.rowcount != 0
 
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(mdbQuery, (userId(), str(uuid), timezone, str(uuid)))
+            await conn.commit()
             result |= cur.rowcount != 0 << 1
 
         return result == 0b11
@@ -127,10 +133,12 @@ class DataDatabase:
         result: int = 0
         async with this.sqlite.getConn() as conn:
             cur = await conn.execute(query, (userId(),))
+            await conn.commit()
             result |= cur.rowcount != 0
 
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(query.replace("?", "%s"), (userId(),))
+            await conn.commit()
             result |= cur.rowcount != 0 << 1
 
         return result == 0b11

@@ -18,6 +18,8 @@ class ServerLogger:
         this.loggingEnabled = enabled
 
     async def sendLogEmbed(this, request: SimpleRequest) -> None:
+        if not this.loggingEnabled:
+            return
         if isinstance(request, PingRequest):
             return
 

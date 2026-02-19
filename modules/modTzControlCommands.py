@@ -46,12 +46,12 @@ class TzCommands(commands.Cog):
             embed = await this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
 
-        elif await this.client.db.setTimezone(UInt64(ctx.user.id), timezone):
+        elif result := await this.client.db.setTimezone(UInt64(ctx.user.id), timezone):
             embed = await this.client.getSuccess(user=ctx.user)
-            log.info(f"{ctx.user.name} set their timezone to {timezone}!")
+            log.info(f"{ctx.user.name} set their timezone to {timezone}! Result: {result}")
             await ctx.response.send_message(embed=embed, ephemeral=True)
         else:
-            log.error(f"Failed to set timezone for user {ctx.user.name} to {timezone}!")
+            log.error(f"Failed to set timezone for user {ctx.user.name} to {timezone}! Result: {result}")
             embed = await this.client.getFail(user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
 

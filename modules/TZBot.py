@@ -146,10 +146,14 @@ class TZBot(commands.Bot):
         log.info("Fresh GeoIP database fetched!")
 
     # WSS shit
-    async def startRunning(this) -> None:
-        this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
-        await this.start(this.config.token)
-
+    async def startRunning(this, *, apiOnly: bool = False) -> None:
+        if apiOnly:
+            await this.API_PACKET_LOGGER.setLoggingEnabled(False)
+            await this.API_SERVER.start()
+            log.warning("Running in API-only mode!")
+        else:
+            this.API_SERVER_TASK = asyncio.create_task(this.API_SERVER.start())
+            await this.start(this.config.token)
 
     async def on_ready(this) -> None:
         await this.syncGeoIP()
