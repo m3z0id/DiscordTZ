@@ -4,7 +4,7 @@ import logging
 import struct
 from asyncio import Server
 from json import JSONDecodeError
-from typing import Final, Optional
+from typing import Final, Optional, TYPE_CHECKING
 
 from cryptography.exceptions import InvalidTag
 
@@ -14,6 +14,9 @@ from server.requests import SimpleRequest, PingRequest, TimezoneFromUserIdReques
     UserIdUUIDLinkPost, \
     TimezoneFromUUIDRequest, IsLinkedRequest, UserIdFromUUIDRequest, UUIDFromUserIdRequest, TimezoneAdjustRequest
 from shared import Helpers
+
+if TYPE_CHECKING:
+    from modules import TZBot
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ class APIServer:
 
     transport: asyncio.DatagramTransport
 
-    def __init__(this, tzBot: "TZBot") -> None:
+    def __init__(this, tzBot: TZBot) -> None:
         this.tzBot = tzBot
         this.db = tzBot.db
         this.serverConfig = tzBot.config.server
@@ -53,8 +56,7 @@ class APIServer:
         this.UDP_SERVER = UDPProtocol(this)
 
         loop = asyncio.get_running_loop()
-        transport, *_ = await loop.create_datagram_endpoint(lambda: this.UDP_SERVER, local_addr=("0.0.0.0", this.serverConfig.port()))
-        this.transport = transport
+        this.transport, *_ = await loop.create_datagram_endpoint(lambda: this.UDP_SERVER, local_addr=("0.0.0.0", this.serverConfig.port()))
 
         log.info("Server running!")
 
@@ -65,7 +67,7 @@ class APIServer:
             protocol = "UDP"
 
         log.warning(f"Got an invalid {protocol} request: {msg}")
-        fakeJson: dict = {"requestType": "INVALID", "data": {"message": msg}}
+        fakeJson: dict = {"requestType": "INVALID", "data": { msg }}
         fakeJsonData: dict = fakeJson.pop("data")
 
         request = SimpleRequest(client, fakeJson, fakeJsonData, this.tzBot)
@@ -153,7 +155,6 @@ class APIServer:
 
         try:
             jsonRequest: Optional[dict] = json.loads(content.decode("utf-8", errors="ignore"))
-            log.info(jsonRequest)
         except (JSONDecodeError, TypeError):
             client.flags = 0
             await this.respondToInvalid(content, client)

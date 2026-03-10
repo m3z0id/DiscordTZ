@@ -75,10 +75,13 @@ class DataDatabase:
             await conn.commit()
             result |= cur.rowcount != 0
 
-        async with this.mdb.getConn() as conn, conn.cursor() as cur:
-            await cur.execute(mdbQuery, (timezone, str(uuid)))
-            await conn.commit()
-            result |= cur.rowcount != 0 << 1
+        try:
+            async with this.mdb.getConn() as conn, conn.cursor() as cur:
+                await cur.execute(mdbQuery, (timezone, str(uuid)))
+                await conn.commit()
+                result |= cur.rowcount != 0 << 1
+        except AttributeError as e:
+            pass
 
         return UInt8(result)
 

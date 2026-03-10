@@ -168,7 +168,7 @@ class TzCommands(commands.Cog):
         hour="Hour of the date you want to convert. Defaults to the current hour.",
         minute="Minute of the date you want to convert. Defaults to the current minute.",
         second="Second of the date you want to convert. Defaults to the current second.",
-        timezone="Timezone the date is in. Defaults to UTC."
+        timezone="Timezone the date is in. Defaults to the user's timezone if found, otherwise UTC."
     )
     async def unixTo(this, ctx: discord.Interaction,
                      year: app_commands.Range[int, 1970, 9999] = datetime.datetime.now().year,
@@ -192,6 +192,9 @@ class TzCommands(commands.Cog):
         tz: datetime.tzinfo = pytz.UTC
         if timezone:
             tz = pytz.timezone(timezone)
+        else:
+            if zoneStr := await this.client.db.getTimezoneFromUserId(UInt64(ctx.user.id)):
+                tz = pytz.timezone(zoneStr)
 
         requestedTime = tz.localize(requestedTime, False)
         utcOffset = requestedTime.strftime("%z")

@@ -3,31 +3,24 @@ import contextlib
 import copy
 import datetime
 import logging
-import tarfile
-import time
-from copy import deepcopy
 from typing import Final, Optional
 from uuid import UUID
 
-import aiohttp
 import discord
-import geoip2
-import maxminddb.errors
-from aiohttp import BasicAuth, ClientResponseError
 from discord import User
 from discord.ext import commands
 from discord.ext.commands import ExtensionNotLoaded, ExtensionNotFound, ExtensionAlreadyLoaded, \
     NoEntryPointError, ExtensionFailed, Context, errors
 from discord.ext.commands._types import BotT
 from geoip2 import database  # noqa: F401
-from six import BytesIO
 
 from database import APIKeyDatabase, DataDatabase
 from dtypes import Config, Command, UInt64, ModuleBlacklist
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
-from shared import CONFIG_FILE, GEO_IP_DB_FILE, SUCCESS, FAIL, HTTP_HEADERS, DAY_SECONDS, \
-    GEO_IP_URL, MODULES_DIR, SORRY_PATTERN, ROMANIA_PATTERN, MOD_BLACKLIST_FILE
+from shared import CONFIG_FILE, GEO_IP_DB_FILE, SUCCESS, FAIL, MODULES_DIR, SORRY_PATTERN, \
+    ROMANIA_PATTERN, MOD_BLACKLIST_FILE, GeoIP
+from shared.NetClient import NetClient
 
 log = logging.getLogger(__name__)
 
@@ -52,15 +45,7 @@ class TZBot(commands.Bot):
         this.db: DataDatabase = DataDatabase(this.config.mariadbDetails)
         this.apiDb = APIKeyDatabase()
         this.modBlacklist = ModuleBlacklist(MOD_BLACKLIST_FILE)
-
-        GEO_IP_DB_FILE.parent.mkdir(exist_ok=True, parents=True)
-        GEO_IP_DB_FILE.touch(exist_ok=True)
-
-        try:
-            this.maxMindDb: geoip2.database.Reader = geoip2.database.Reader(GEO_IP_DB_FILE)
-        except maxminddb.errors.InvalidDatabaseError:
-            log.error("MaxMind DB is invalid, will fetch")
-            this.syncOverride = True
+        this.netClient = NetClient()
 
         this.API_PACKET_LOGGER = ServerLogger(this, True)
         this.API_SERVER = APIServer(this)
@@ -86,67 +71,9 @@ class TZBot(commands.Bot):
 
         return failCpy
 
-    # Internet shit
-    async def downloadFile(this, url: str, contentTypes: set[str]) -> Optional[tuple[str, bytes]]:
-        log.info(f"Downloading from {url}")
-        headersCpy = deepcopy(HTTP_HEADERS)
-        headersCpy["Accept"] = ",".join(contentTypes)
-
-        try:
-            async with aiohttp.ClientSession(headers=headersCpy) as session:
-                async with session.get(url) as response:
-                    if response.status == 200 and response.content_type in contentTypes:
-                        log.info("Download was successful!")
-                        return response.content_type, await response.read()
-
-                    else:
-                        log.error(f"Download failed! Content type: {response.content_type}; Code: {response.status}")
-                        return None
-
-        except ClientResponseError as e:
-            log.error(f"Download failed!: {e!s}")
-
-    async def syncGeoIP(this):
-        if not this.syncOverride:
-            if GEO_IP_DB_FILE.is_file():
-                currentTime = time.time()
-                secondsDiff = currentTime - GEO_IP_DB_FILE.stat().st_ctime
-                if secondsDiff < DAY_SECONDS:
-                    log.info("Skipping GeoLite2 database download, it was updated less than 24 hours ago.")
-                    return
-
-        log.info("Downloading GeoLite2 database...")
-        headers = copy.deepcopy(HTTP_HEADERS)
-        headers["Accept"] = ",".join({"application/tar", "application/tar+gzip"})
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(GEO_IP_URL, auth=BasicAuth(str(this.config.maxmind.accountId), this.config.maxmind.token, "utf-8")) as response:
-                if response.status == 200:
-                    tarArchiveRaw = BytesIO(await response.read())
-                else:
-                    log.error(f"GeoIP failed! Content type: {response.content_type}; Code: {response.status}; {await response.read()}")
-                    return
-
-        mmdb: Optional[bytes] = None
-        with tarfile.open(fileobj=tarArchiveRaw, mode="r:*") as tar:
-            for member in tar:
-                if member.isfile() and member.name.endswith("GeoLite2-City.mmdb"):
-                    extracted = tar.extractfile(member)
-                    if extracted:
-                        mmdb = extracted.read()
-                    break
-
-        if not mmdb:
-            log.error("Failed to find the database file in the TAR.")
-            return
-
-        with GEO_IP_DB_FILE.open("wb") as f:
-            f.write(mmdb)
-
-        this.maxMindDb = geoip2.database.Reader(GEO_IP_DB_FILE)
-        log.info("Fresh GeoIP database fetched!")
-
     # WSS shit
     async def startRunning(this, *, apiOnly: bool = False) -> None:
+        this.geoIP = await GeoIP.create(this, GEO_IP_DB_FILE)
         if apiOnly:
             await this.API_PACKET_LOGGER.setLoggingEnabled(False)
             await this.API_SERVER.start()
@@ -156,7 +83,6 @@ class TZBot(commands.Bot):
             await this.start(this.config.token)
 
     async def on_ready(this) -> None:
-        await this.syncGeoIP()
         await this.loadCogs()
         await this.db.asyncInit()
         await this.apiDb.asyncInit()

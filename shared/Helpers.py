@@ -5,10 +5,13 @@ import logging
 import os
 import secrets
 import string
+import tarfile
 import tempfile
+import time
 import zlib
 from io import BytesIO
 from pathlib import Path
+from tarfile import TarFile
 from typing import ParamSpec, TypeVar, Optional
 
 import discord
@@ -109,6 +112,27 @@ class Helpers:
                 with outputPng.open("rb") as f:
                     return BytesIO(f.read())
             
+            return None
+
+    @staticmethod
+    def getFileAge(path: Path) -> Optional[int]:
+        """ Returns the file age in seconds. """
+        if path.is_file(): return None
+        currentTime = time.time()
+        return int(currentTime - path.stat().st_ctime)
+
+    @staticmethod
+    def getFileFromTar(inMemoryFile: BytesIO, inTarPath: str) -> Optional[bytes]:
+        if not tarfile.is_tarfile(inMemoryFile): return None
+        with tarfile.open(fileobj=inMemoryFile) as tar:
+            tar: TarFile
+            for member in tar:
+                if member.isfile() and member.path.endswith(inTarPath):
+                    extracted = tar.extractfile(member)
+                    if extracted:
+                        return extracted.read()
+
+            log.error("Failed to find the desired file in the TAR.")
             return None
 
     @staticmethod

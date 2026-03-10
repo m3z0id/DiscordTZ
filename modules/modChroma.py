@@ -67,7 +67,7 @@ class Chroma(commands.Cog):
         images: set[tuple[str, bytes]] = set()
         for match in re.finditer(URL_PATTERN, msg.content):
             url = match.group(0)
-            response = await this.client.downloadFile(url, IMAGE_CONTENT_TYPES)
+            response = await this.client.netClient.downloadFile(url, mimeTypes=IMAGE_CONTENT_TYPES)
             if response: images.add(response)
 
         return images
@@ -77,11 +77,11 @@ class Chroma(commands.Cog):
         if len(msg.embeds) > 0:
             for embed in msg.embeds:
                 if embed.image:
-                    response = await this.client.downloadFile(embed.image.url, IMAGE_CONTENT_TYPES)
+                    response = await this.client.netClient.downloadFile(embed.image.url, mimeTypes=IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
 
                 if embed.thumbnail:
-                    response = await this.client.downloadFile(embed.thumbnail.url, IMAGE_CONTENT_TYPES)
+                    response = await this.client.netClient.downloadFile(embed.thumbnail.url, mimeTypes=IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
 
         return images
@@ -92,7 +92,7 @@ class Chroma(commands.Cog):
         for match in re.finditer(EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
             emojiUrl = f"https://cdn.discordapp.com/emojis/{emojiId}"
-            response = await this.client.downloadFile(emojiUrl, IMAGE_CONTENT_TYPES)
+            response = await this.client.netClient.downloadFile(emojiUrl, mimeTypes=IMAGE_CONTENT_TYPES)
             if response: images.add(response)
 
         return images

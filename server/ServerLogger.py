@@ -1,6 +1,7 @@
 import io
 import json
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import discord
 
@@ -8,9 +9,11 @@ from server.requests import SimpleRequest, PingRequest, TimezoneFromIPRequest, U
 from shared import Helpers, MAX_DATA_EMBED_LEN
 from dtypes import PacketFlags, ErrorCode
 
+if TYPE_CHECKING:
+    from modules import TZBot
 
 class ServerLogger:
-    def __init__(this, tzBot: "TZBot", loggingEnabled: bool) -> None:
+    def __init__(this, tzBot: TZBot, loggingEnabled: bool) -> None:
         this.tzBot = tzBot
         this.loggingEnabled = loggingEnabled
 

@@ -53,10 +53,7 @@ class SimpleRequest:
         this.tzBot = tzBot
 
         this.protocol = "TCP" if isinstance(client, TCPClient) else "UDP"
-        try:
-            this.city = this.tzBot.maxMindDb.city(str(this.client.ip))
-        except geoip2.errors.AddressNotFoundError:
-            this.city = None
+        this.city = this.tzBot.geoIP.city(this.client.ip)
 
     async def process(this) -> None:
         if this.city and this.city.country.iso_code in BLACKLISTED_COUNTRIES:
