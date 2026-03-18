@@ -1,3 +1,4 @@
+from __future__ import annotations
 import inspect
 import json
 import logging
@@ -5,16 +6,15 @@ import random
 from typing import ParamSpec, TypeVar, Callable, Coroutine, Any, TYPE_CHECKING, Optional
 from uuid import UUID
 
-import geoip2
 from geoip2 import errors  # noqa: F401
 from geoip2.models import City
 
+from dtypes import ErrorCode, Response, PacketFlags, UInt64
 from modules import TZBot
 from server.APIKey import APIKey, APIPermissions
 from server.protocol import Client
 from server.protocol import TCPClient
 from shared import BLACKLISTED_COUNTRIES
-from dtypes import ErrorCode, Response, PacketFlags, UInt64
 
 if TYPE_CHECKING:
     pass

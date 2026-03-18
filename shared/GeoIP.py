@@ -1,5 +1,5 @@
+from __future__ import annotations
 import logging
-from io import BytesIO
 from ipaddress import IPv4Address
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, Optional
