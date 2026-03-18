@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from dtypes.Types import UInt64
 from modules import TZBot
-from shared import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST, MAX_TIMESTAMP
+from shared import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST, MAX_TIMESTAMP, isOwner
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +210,30 @@ class TzCommands(commands.Cog):
 
         await ctx.response.send_message(embed=embed)
         return
+
+    @TIMEZONE_GROUP.command(name="admin-add", description="Admin command to add a person to the database.")
+    @app_commands.autocomplete(timezone=getTimezones)
+    @app_commands.describe(
+        user="User to add to the database.",
+        timezone="Timezone to set for the user."
+    )
+    @app_commands.check(isOwner)
+    async def adminAdd(this, ctx: discord.Interaction, user: discord.Member, timezone: str) -> None:
+        if timezone not in TIMEZONE_CHECK_LIST:
+            log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
+            fail = this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
+            await ctx.response.send_message(embed=fail, ephemeral=True)
+            return
+
+        if await this.client.db.setTimezone(UInt64(user.id), timezone):
+            embed = await this.client.getSuccess(user=ctx.user)
+            log.info(f"{ctx.user.name} set {user.name}'s timezone to {timezone}!")
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+        else:
+            log.error(f"Failed to set timezone for user {user.name} to {timezone}!")
+            embed = await this.client.getFail(user=ctx.user)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+
 
 async def setup(client: TZBot) -> None:
     await client.add_cog(TzCommands(client))
