@@ -68,7 +68,7 @@ class APIServer:
             protocol = "UDP"
 
         log.warning(f"Got an invalid {protocol} request: {msg}")
-        fakeJson: dict = {"requestType": "INVALID", "data": { msg }}
+        fakeJson: dict = {"requestType": "INVALID", "data": msg}
         fakeJsonData: dict = fakeJson.pop("data")
 
         request = SimpleRequest(client, fakeJson, fakeJsonData, this.tzBot)
