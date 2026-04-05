@@ -1,5 +1,4 @@
 import asyncio
-import io
 import logging
 import re
 from io import BytesIO
@@ -11,10 +10,10 @@ from PIL import Image
 from discord import app_commands
 from discord.ext import commands
 
+from dtypes import ColorSpace
 from modules import TZBot
 from shared import IMAGE_CONTENT_TYPES, CHROMA_EXEC_FILE, VALID_COLOR_SPACES, TEMP_IMAGES_DIR, URL_PATTERN, \
     EMOJI_PATTERN
-from dtypes import ColorSpace
 
 log = logging.getLogger(__name__)
 
@@ -58,13 +57,13 @@ class Chroma(commands.Cog):
 
         return file
 
-    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
-        images: set[tuple[str, bytes]] = {(attachment.content_type, await attachment.read()) for attachment in
+    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
+        images: set[tuple[str, BytesIO]] = {(attachment.content_type, BytesIO(await attachment.read())) for attachment in
                                                msg.attachments if attachment.content_type in IMAGE_CONTENT_TYPES}
         return images
 
-    async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, bytes]]:
-        images: set[tuple[str, bytes]] = set()
+    async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
+        images: set[tuple[str, BytesIO]] = set()
         for match in re.finditer(URL_PATTERN, msg.content):
             url = match.group(0)
             response = await this.client.netClient.downloadFile(url, mimeTypes=IMAGE_CONTENT_TYPES)
@@ -72,28 +71,31 @@ class Chroma(commands.Cog):
 
         return images
 
-    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[tuple[str, bytes]]:
-        images: set[tuple[str, bytes]] = set()
+    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
+        images: set[tuple[str, BytesIO]] = set()
         if len(msg.embeds) > 0:
             for embed in msg.embeds:
                 if embed.image:
                     response = await this.client.netClient.downloadFile(embed.image.url, mimeTypes=IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
+                    else: log.error("No response for embed image!")
 
                 if embed.thumbnail:
                     response = await this.client.netClient.downloadFile(embed.thumbnail.url, mimeTypes=IMAGE_CONTENT_TYPES)
                     if response: images.add(response)
+                    else: log.error("No response for embed image!")
 
         return images
 
-    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, bytes]]:
-        images: set[tuple[str, bytes]] = set()
+    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
+        images: set[tuple[str, BytesIO]] = set()
 
         for match in re.finditer(EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
             emojiUrl = f"https://cdn.discordapp.com/emojis/{emojiId}"
             response = await this.client.netClient.downloadFile(emojiUrl, mimeTypes=IMAGE_CONTENT_TYPES)
             if response: images.add(response)
+            else: log.error("No response for custom emoji!")
 
         return images
 
@@ -125,7 +127,7 @@ class Chroma(commands.Cog):
             return
 
         await this.COMMAND_LOCK.acquire()
-        imagesToProcess: set[tuple[str, bytes]] = set()
+        imagesToProcess: set[tuple[str, BytesIO]] = set()
 
         if ctx.message.attachments:
             imagesToProcess.update(await this.getImageAttachmentsFromMessage(ctx.message))
@@ -146,7 +148,7 @@ class Chroma(commands.Cog):
         TEMP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         for i, image in enumerate(imagesToProcess):
             currentImgPath: Path = TEMP_IMAGES_DIR / f"{i}.bmp"
-            pic = Image.open(io.BytesIO(image[1]))
+            pic = Image.open(image[1])
             pic.convert("RGBA").save(currentImgPath)
             tasks.add(this.runChroma(currentImgPath, colorspace, modifications))
 

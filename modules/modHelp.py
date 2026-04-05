@@ -4,7 +4,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 from discord.app_commands import ContextMenu, Group, Command, AppCommandGroup
-from discord.ext import tasks, commands
+from discord.ext import commands
 
 from dtypes import TZCommand
 from modules import TZBot
@@ -18,19 +18,16 @@ class Help(commands.Cog):
     def __init__(this, client: TZBot) -> None:
         this.client = client
         this.commandList = {}
-        this.refreshCommandList.start()
 
-    @tasks.loop(minutes=1)
     async def refreshCommandList(this) -> None:
         log.info("Command list is being refreshed...")
-
         localCommandList = this.client.tree.get_commands()
-        serverCommandList = []
 
         try:
             serverCommandList = await this.client.tree.fetch_commands()
         except discord.HTTPException:
             log.error("Failed to fetch global commands")
+            return
 
         serverByName = {cmd.name: cmd for cmd in serverCommandList}
 
@@ -75,10 +72,6 @@ class Help(commands.Cog):
 
         this.commandList = newCommandMap
         log.info(f"Generated help for {len(this.commandList)} commands!")
-
-    @refreshCommandList.before_loop
-    async def before_refresh_command_list(this) -> None:
-        await this.client.wait_until_ready()
 
     async def commandAutocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         return [app_commands.Choice(name=name, value=name)

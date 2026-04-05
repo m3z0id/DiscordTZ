@@ -9,7 +9,7 @@ from shared import HTTP_HEADERS
 
 log = logging.getLogger(__name__)
 class NetClient:
-    client: Final[aiohttp.ClientSession]
+    client: aiohttp.ClientSession
 
     def __init__(this) -> None:
         this.client = aiohttp.ClientSession(headers=HTTP_HEADERS)
@@ -19,7 +19,7 @@ class NetClient:
         if mimeTypes:
             headers["Accept"] = ",".join(mimeTypes)
         try:
-            async with this.client as c, c.get(url, auth=auth) as response:
+            async with this.client.get(url, auth=auth) as response:
                 if not str(response.status).startswith("2"):
                     log.error(f"Failed to download from {url}: {response.status}")
                     return None

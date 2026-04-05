@@ -16,6 +16,7 @@ from geoip2 import database  # noqa: F401
 
 from database import APIKeyDatabase, DataDatabase
 from dtypes import Config, Command, UInt64, ModuleBlacklist
+from modules.modHelp import Help
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
 from shared import CONFIG_FILE, GEO_IP_DB_FILE, SUCCESS, FAIL, MODULES_DIR, SORRY_PATTERN, \
@@ -94,6 +95,10 @@ class TZBot(commands.Bot):
         this.apiThread = await actr.fetch_channel(this.config.server.apiApproveChannelId())
 
         await this.tree.sync()
+        this.helpCog = this.get_cog("modHelp")
+        if not isinstance(this.helpCog, Help):
+            log.error("Help cog failed to load!")
+
         log.info("Discord Bot is online!")
 
     async def on_command_error(this, ctx: Context[BotT], exception: errors.CommandError, /) -> None:
@@ -113,8 +118,13 @@ class TZBot(commands.Bot):
             log.warning(f"{ctx.author.name} tried to run a command which requires arguments!")
             await ctx.reply(embed=await this.getFail(description="I think you forgot some arguments to this command!", user=ctx.author))
 
+        elif isinstance(exception, commands.BadLiteralArgument):
+            log.warning(f"{ctx.author.name} tried to run a command with an invalid literal argument!")
+            await ctx.reply(embed=await this.getFail(description="One of the arguments you provided is invalid!", user=ctx.author))
+
         else:
             log.error(f"Unhandled error type: {exception.__class__.__name__}")
+            log.error(f"{exception.__dict__}")
             await ctx.send("An unexpected error occurred.")
 
     # is_owner override
@@ -125,14 +135,22 @@ class TZBot(commands.Bot):
         return this.isOwner(UInt64(user.id))
 
     # Modules shit
-    def getAvailableModules(this) -> list[str]:
-        return [file.stem[3:] for file in MODULES_DIR.glob("mod*.py")]
+    def getAvailableModules(this, *, exemptBlacklisted: bool = False) -> list[str]:
+        modules = [file.stem[3:] for file in MODULES_DIR.glob("mod*.py")]
+        if exemptBlacklisted:
+            return [module for module in modules if not this.modBlacklist.isBlacklisted(module)]
+
+        return modules
 
     def getLoadedModules(this) -> list[str]:
         return this.loadedModules
 
     def getUnloadedModules(this) -> list[str]:
         return [module for module in this.getAvailableModules() if module not in this.loadedModules]
+
+    async def _refreshHelp(this) -> None:
+        if isinstance(this.helpCog, Help):
+            await this.helpCog.refreshCommandList()
 
     async def unloadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -146,6 +164,7 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to unload module {module}: {e!s}")
 
         await this.tree.sync()
+        await this._refreshHelp()
         log.info(f"Module {", ".join(modules)} unloaded!")
 
     async def loadModules(this, modules: list[str]) -> None:
@@ -160,6 +179,7 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to load module {module}: {e!s}")
 
         await this.tree.sync()
+        await this._refreshHelp()
         log.info(f"Modules {", ".join(modules)} loaded!")
 
     async def reloadModules(this, modules: list[str]) -> None:
@@ -173,17 +193,12 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to reload module {module}: {e!s}")
 
         await this.tree.sync()
+        await this._refreshHelp()
         log.info(f"Module {", ".join(modules)} reloaded!")
 
     async def loadCogs(this) -> None:
-        this.loadedModules.extend(this.getAvailableModules())
-        for module in this.getAvailableModules():
-            if this.modBlacklist.isBlacklisted(module):
-                log.info(f"Module {module} is blacklisted, skipping!")
-                this.loadedModules.remove(module)
-                continue
-
-            await this.load_extension(f"modules.mod{module}")
+        availableModules = this.getAvailableModules(exemptBlacklisted=True)
+        await this.loadModules(availableModules)
 
         log.info(f"Modules {', '.join(this.loadedModules)} loaded!")
 
