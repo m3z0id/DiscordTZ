@@ -3,7 +3,7 @@ import contextlib
 import copy
 import datetime
 import logging
-from typing import Final, Optional
+from typing import Final, Optional, cast
 from uuid import UUID
 
 import discord
@@ -95,10 +95,6 @@ class TZBot(commands.Bot):
         this.apiThread = await actr.fetch_channel(this.config.server.apiApproveChannelId())
 
         await this.tree.sync()
-        this.helpCog = this.get_cog("modHelp")
-        if not isinstance(this.helpCog, Help):
-            log.error("Help cog failed to load!")
-
         log.info("Discord Bot is online!")
 
     async def on_command_error(this, ctx: Context[BotT], exception: errors.CommandError, /) -> None:
@@ -149,8 +145,8 @@ class TZBot(commands.Bot):
         return [module for module in this.getAvailableModules() if module not in this.loadedModules]
 
     async def _refreshHelp(this) -> None:
-        if isinstance(this.helpCog, Help):
-            await this.helpCog.refreshCommandList()
+        this.helpCog = cast(Help, this.get_cog("Help"))
+        await this.helpCog.refreshCommandList()
 
     async def unloadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -164,8 +160,8 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to unload module {module}: {e!s}")
 
         await this.tree.sync()
-        await this._refreshHelp()
         log.info(f"Module {", ".join(modules)} unloaded!")
+        await this._refreshHelp()
 
     async def loadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -179,8 +175,8 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to load module {module}: {e!s}")
 
         await this.tree.sync()
-        await this._refreshHelp()
         log.info(f"Modules {", ".join(modules)} loaded!")
+        await this._refreshHelp()
 
     async def reloadModules(this, modules: list[str]) -> None:
         for module in modules:
@@ -193,14 +189,12 @@ class TZBot(commands.Bot):
                 log.error(f"Failed to reload module {module}: {e!s}")
 
         await this.tree.sync()
-        await this._refreshHelp()
         log.info(f"Module {", ".join(modules)} reloaded!")
+        await this._refreshHelp()
 
     async def loadCogs(this) -> None:
         availableModules = this.getAvailableModules(exemptBlacklisted=True)
         await this.loadModules(availableModules)
-
-        log.info(f"Modules {', '.join(this.loadedModules)} loaded!")
 
 
     # Verification code invalidifier
