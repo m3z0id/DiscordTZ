@@ -10,6 +10,7 @@ from pathlib import Path
 import discord
 
 from modules import TZBot
+from shared import applySandbox
 
 # Logger setup
 fileHandler = logging.FileHandler(filename="bot.log", encoding="utf-8", mode="a")
@@ -24,6 +25,8 @@ log = logging.getLogger(__name__)
 
 
 async def main() -> None:
+    applySandbox()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-only", action="store_true", help="Run in API-only mode.")
     parser.add_argument("--no-pidfile", action="store_true", help="Do not patch the PID file.")

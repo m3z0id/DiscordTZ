@@ -1,19 +1,16 @@
 import copy
-import warnings
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 from io import BytesIO
-from pathlib import Path
 from typing import Literal, TypeVar, Self, ClassVar, Final, Union, Type, Optional, NamedTuple
 
-import discord.ui
 from dataclasses_json import dataclass_json, config
 from discord import Permissions
 from discord.app_commands import Command, Group, AppCommand, AppCommandGroup, MissingPermissions
 from discord.app_commands.transformers import CommandParameter
 from marshmallow import fields
 
-from shared import Constants, MODULES_DIR, Helpers
+from shared import Constants
 
 
 class DeepCopier(type):
@@ -173,62 +170,6 @@ class Config:
     mariadbDetails: MariaDBConfig
     server: ServerConfig
     packetLogs: PacketLogsConfig
-
-
-class ModuleBlacklist:
-    _path: Final[Path]
-    _blacklisted: set[str]
-
-    def __init__(this, blacklistPath: Path):
-        this._path = blacklistPath
-        this._blacklisted = set()
-        this.reload()
-
-    def reload(this) -> None:
-        if not Helpers.isFileRW(this._path):
-            this._path.touch(exist_ok=True)
-            this._blacklisted = set()
-            return
-
-        with this._path.open("r") as f:
-            contents = f.read().strip()
-
-        this._blacklisted.clear()
-        if len(contents) < 1: return
-
-        temp = contents.split(";")
-        for item in temp:
-            item = item.strip()
-            if len(item) < 1: continue
-            if not Helpers.isFileRW(MODULES_DIR / f"mod{item}.py"):
-                warnings.warn(f"Module {item} doesn't exist!")
-
-            this._blacklisted.add(item)
-
-    def dump(this) -> None:
-        if len(this._blacklisted) == 0: return
-
-        with this._path.open("w") as f:
-            f.write(";".join(this._blacklisted))
-
-    def isBlacklisted(this, modName: str) -> bool:
-        return modName in this._blacklisted
-
-    def add(this, modName: str) -> None:
-        if this._blacklisted.__contains__(modName):
-            warnings.warn("This module is already blacklisted!")
-            return
-
-        this._blacklisted.add(modName)
-        this.dump()
-
-    def remove(this, modName: str) -> None:
-        try:
-            this._blacklisted.remove(modName)
-        except KeyError:
-            warnings.warn("This module is not blacklisted!")
-        finally:
-            this.dump()
 
 
 type ValidStatusCode = Literal[-1, 200, 400, 403, 404, 405, 409, 500]

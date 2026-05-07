@@ -44,8 +44,14 @@ class Helpers:
         return Helpers.isFileAccessible(path, FileAccessType.R_OK | FileAccessType.X_OK)
 
     @staticmethod
+    def createDirOrGet(path: Path) -> Path:
+        if path.is_dir(): return path
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
     def addDirToPath(path: Path) -> None:
-        if not path.is_dir(): raise ValueError("Path must be a directory!")
+        if not path.is_dir(): raise ValueError(f"{path.as_posix()} must be a directory!")
         sys.path.insert(0, str(path))
 
     @staticmethod

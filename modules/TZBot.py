@@ -17,7 +17,8 @@ from discord.ext.commands._types import BotT
 from geoip2 import database  # noqa: F401
 
 from database import APIKeyDatabase, DataDatabase
-from dtypes import Config, Command, UInt64, ModuleBlacklist
+from dtypes import Config, Command, UInt64
+from modules.manager import ModuleBlacklist
 from modules.modHelp import Help
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
@@ -82,7 +83,7 @@ class TZBot(commands.Bot):
     # WSS shit
     async def startRunning(this, *, apiOnly: bool = False, pidFile: bool = True) -> None:
         log.info(f"Current PID is {os.getpid()}")
-        Helpers.addDirToPath(EXECS_DIR)
+        Helpers.addDirToPath(Helpers.createDirOrGet(EXECS_DIR))
 
         if pidFile: Helpers.patchPidFile(this.rootDir)
         this.geoIP = await GeoIP.create(this, GEO_IP_DB_FILE)

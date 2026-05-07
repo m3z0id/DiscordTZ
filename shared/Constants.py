@@ -100,3 +100,15 @@ MAX_SHOWABLE_RESULTS: Final[int] = 25
 VERIFY_CODE_LEN: Final[int] = 6
 MAX_DATA_EMBED_LEN: Final[int] = 1500
 MAX_TIMESTAMP: Final[int] = 253402300799
+
+# Sandbox
+SYSTEM_READ: Final[set[str]] = {
+    "/usr/lib",
+    "/usr/lib64",
+    "/etc",
+    "/usr/share",
+}
+
+SYSTEM_RW: Final[set[str]] = {
+    "/tmp",
+}

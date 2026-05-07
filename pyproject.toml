@@ -6,25 +6,25 @@ authors = [{name="M3z0id"}]
 requires-python = ">=3.13"
 
 dependencies = [
-    "datetime==5.5",
+    "datetime==6.0",
     "asyncio==4.0.0",
-    "cryptography==46.0.3",
-    "geoip2==5.1.0",
-    "pytz==2025.2",
-    "requests==2.32.5",
+    "cryptography==48.0.0",
+    "geoip2==5.2.0",
+    "pytz==2026.2",
+    "requests==2.33.1",
     "tzlocal==5.3.1",
     "dataclasses-json==0.6.7",
-    "aiosqlite==0.21.0",
-    "aiomysql==0.3.0",
-    "aiofiles==24.1.0",
-    "numpy==2.3.2",
-    "srvresolver>=0.3.5",
+    "aiosqlite==0.22.1",
+    "aiomysql==0.3.2",
+    "aiofiles==25.1.0",
+    "numpy==2.4.4",
     "audioop-lts>=0.2.2",
     "discord-py>=2.7.1",
-    "pyjwt>=2.11.0",
-    "pillow==11.3.0",
+    "pyjwt>=2.12.1",
+    "pillow==12.2.0",
+    "landlock>=1.0.0.dev5 ; sys_platform == 'linux'",
     "msgpack==1.1.2",
-    "aiohttp>=3.12.15",
+    "aiohttp>=3.13.5",
 ]
 
 [tool.ruff]
