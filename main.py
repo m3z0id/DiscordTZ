@@ -7,7 +7,6 @@ import signal
 import discord
 
 from modules import TZBot
-from shared.Sandbox import apply_sandbox
 
 # Logger setup
 fileHandler = logging.FileHandler(filename="bot.log", encoding="utf-8", mode="a")
@@ -22,8 +21,6 @@ log = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    apply_sandbox()
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-only", action="store_true", help="Run in API-only mode.")
 
