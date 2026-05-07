@@ -1,9 +1,10 @@
 import copy
 import warnings
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, IntFlag
+from io import BytesIO
 from pathlib import Path
-from typing import Literal, TypeVar, Self, ClassVar, Final, Union, Type, Optional
+from typing import Literal, TypeVar, Self, ClassVar, Final, Union, Type, Optional, NamedTuple
 
 import discord.ui
 from dataclasses_json import dataclass_json, config
@@ -11,6 +12,8 @@ from discord import Permissions
 from discord.app_commands import Command, Group, AppCommand, AppCommandGroup, MissingPermissions
 from discord.app_commands.transformers import CommandParameter
 from marshmallow import fields
+
+from shared import Constants, MODULES_DIR, Helpers
 
 
 class DeepCopier(type):
@@ -85,6 +88,13 @@ class LimitedInt:
     def __hash__(this) -> int:
         return this._val.__hash__()
 
+    @classmethod
+    def boundsChecked(cls, value: int) -> LimitedInt:
+        if 0 > value >= cls.MASK:
+            raise ValueError("Integer failed bounds check!")
+
+        return cls(value)
+
 class UInt8(LimitedInt):
     MASK: ClassVar[int] = 0xFF
     def __init__(this, value: int) -> None:
@@ -102,6 +112,11 @@ class UInt32(LimitedInt):
 
 class UInt64(LimitedInt):
     MASK: ClassVar[int] = 0xFFFFFFFF_FFFFFFFF
+    def __init__(self, value: int) -> None:
+        super().__init__(value)
+
+class UInt128(LimitedInt):
+    MASK: ClassVar[int] = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF
     def __init__(self, value: int) -> None:
         super().__init__(value)
 
@@ -162,17 +177,17 @@ class Config:
 
 class ModuleBlacklist:
     _path: Final[Path]
-    _blacklisted: list[str]
+    _blacklisted: set[str]
 
     def __init__(this, blacklistPath: Path):
         this._path = blacklistPath
-        this._blacklisted = []
+        this._blacklisted = set()
         this.reload()
 
     def reload(this) -> None:
-        if not this._path.exists():
+        if not Helpers.isFileRW(this._path):
             this._path.touch(exist_ok=True)
-            this._blacklisted = []
+            this._blacklisted = set()
             return
 
         with this._path.open("r") as f:
@@ -185,10 +200,10 @@ class ModuleBlacklist:
         for item in temp:
             item = item.strip()
             if len(item) < 1: continue
-            if not Path(f"modules/mod{item}.py").exists():
+            if not Helpers.isFileRW(MODULES_DIR / f"mod{item}.py"):
                 warnings.warn(f"Module {item} doesn't exist!")
 
-            this._blacklisted.append(item)
+            this._blacklisted.add(item)
 
     def dump(this) -> None:
         if len(this._blacklisted) == 0: return
@@ -204,13 +219,13 @@ class ModuleBlacklist:
             warnings.warn("This module is already blacklisted!")
             return
 
-        this._blacklisted.append(modName)
+        this._blacklisted.add(modName)
         this.dump()
 
     def remove(this, modName: str) -> None:
         try:
             this._blacklisted.remove(modName)
-        except ValueError:
+        except KeyError:
             warnings.warn("This module is not blacklisted!")
         finally:
             this.dump()
@@ -238,50 +253,23 @@ class ErrorCode(metaclass=DeepCopier):
     BAD_GEOLOC = Response(-1, "Bad Geolocation")
 
 class PacketFlags(IntEnum):
+    NONE = 0
     AESGCM = 1 << 0
     CHACHAPOLY = 1 << 1
-    GUNZIP = 1 << 2
     MSGPACK = 1 << 3
 
-class APIPayload:
+class APIPayload(NamedTuple):
     dataOffset: UInt8
     requestType: UInt8
     flags: PacketFlags
     contentLen: UInt16
 
-    def __init__(this, dataOffset: Union[UInt8, int], requestType: Union[UInt8, int], flags: PacketFlags, contentLen: Union[UInt16, int]) -> None:
-        if isinstance(dataOffset, int):
-            this.dataOffset = UInt8(dataOffset)
-        else:
-            this.dataOffset = dataOffset
-
-        if isinstance(requestType, int):
-            this.requestType = UInt8(requestType)
-        else:
-            this.requestType = requestType
-
-        this.flags = flags
-
-        if isinstance(contentLen, int):
-            this.contentLen = UInt16(contentLen)
-        else:
-            this.contentLen = contentLen
-
-    @classmethod
-    def fromTuple(cls, apiPayload: tuple[int, int, int, int]) -> Self:
-        if apiPayload[0] > UInt8.MASK: raise ValueError("Data Offset is too big!")
-        if apiPayload[1] > UInt8.MASK: raise ValueError("Request Type is too big!")
-        if apiPayload[2] > UInt8.MASK: raise ValueError("Packet Flags are too big!")
-        if apiPayload[3] > UInt16.MASK: raise ValueError("Content Length is too big!")
-
-        return cls(*apiPayload)
-
-Disablable = Union[discord.ui.Button, discord.ui.TextInput, discord.ui.Select]
 ServerAny = Union[AppCommand, AppCommandGroup]
 
 type PresenceType = Literal["online", "offline", "idle", "dnd", "invisible", "streaming"]
 type ActivityType = Literal["unknown", "playing", "streaming", "listening", "watching"]
 type ColorSpace = Literal["rgb", "hsl", "okhsl", "oklab", "oklch"]
+type ValidProtocol = Literal["TCP", "UDP"]
 
 @dataclass_json
 @dataclass
@@ -317,6 +305,8 @@ class TZCommand:
         this.permissions = permissions
         this.isOwnerOnly = isOwnerOnly
 
+    def getMention(this) -> str:
+        return f"</{this.name}:{this.commandId}>"
 
     @staticmethod
     def _permissionWalker(command: Union[Command, Group]) -> int:
@@ -399,3 +389,28 @@ class TZCommand:
 
     def hasArgs(self) -> bool:
         return self.args is not None and len(self.args) > 0
+
+class TimezoneRepr(NamedTuple):
+    area: str
+    city: str
+
+    def stringify(this) -> str:
+        return f"{this.area}/{this.city.replace(" ", "_")}"
+
+    @classmethod
+    def fromString(cls, tz: str) -> TimezoneRepr:
+        if tz not in Constants.TIMEZONE_CHECK_SET:
+            raise ValueError(f"Unknown timezone: {tz}")
+
+        split = tz.split("/")
+        return cls(split[0], split[1].replace("_", " "))
+
+class TypedBytesIO(NamedTuple):
+    contentType: str
+    content: BytesIO
+
+class FileAccessType(IntFlag):
+    F_OK = 0
+    R_OK = 4
+    W_OK = 2
+    X_OK = 1

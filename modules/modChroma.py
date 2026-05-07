@@ -3,17 +3,17 @@ import logging
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Final, Coroutine, Any, Union
+from typing import Final, Coroutine, Any, Union, cast
 
 import discord
 from PIL import Image
 from discord import app_commands
 from discord.ext import commands
 
-from dtypes import ColorSpace
+from dtypes import ColorSpace, TypedBytesIO
 from modules import TZBot
-from shared import IMAGE_CONTENT_TYPES, CHROMA_EXEC_FILE, VALID_COLOR_SPACES, TEMP_IMAGES_DIR, URL_PATTERN, \
-    EMOJI_PATTERN
+from shared import IMAGE_CONTENT_TYPES, VALID_COLOR_SPACES, TEMP_IMAGES_DIR, URL_PATTERN, \
+    EMOJI_PATTERN, CHROMA_EXEC_FILE
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ class Chroma(commands.Cog):
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-        if not CHROMA_EXEC_FILE.is_file():
-            log.warning(f"Chroma executable not found at {CHROMA_EXEC_FILE}")
+        if not CHROMA_EXEC_FILE:
+            log.warning(f"Chroma executable not found in PATH!")
 
     async def cleanup(this) -> None:
         for _ in this.outputtedImages:
@@ -37,7 +37,7 @@ class Chroma(commands.Cog):
     async def runChroma(this, imgPath: Path, colorspace: ColorSpace, modifications: str) -> BytesIO:
         outputted = Path(TEMP_IMAGES_DIR / f"{imgPath.stem}MODIFIED.bmp")
         process = await asyncio.create_subprocess_exec(
-            CHROMA_EXEC_FILE.absolute(), "-f", f"{imgPath.parent}/{imgPath.name}", "-o", f"{outputted.parent}/{outputted.name}",
+            cast(Path, CHROMA_EXEC_FILE), "-f", f"{imgPath.parent}/{imgPath.name}", "-o", f"{outputted.parent}/{outputted.name}",  # CHROMA_EXEC_FILE can't be null here
             f"--{colorspace}", modifications,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
@@ -57,13 +57,16 @@ class Chroma(commands.Cog):
 
         return file
 
-    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
-        images: set[tuple[str, BytesIO]] = {(attachment.content_type, BytesIO(await attachment.read())) for attachment in
-                                               msg.attachments if attachment.content_type in IMAGE_CONTENT_TYPES}
+    async def getImageAttachmentsFromMessage(this, msg: discord.Message) -> set[TypedBytesIO]:
+        images: set[TypedBytesIO] = set()
+        for attachment in msg.attachments:
+            if not attachment.content_type or attachment.content_type not in IMAGE_CONTENT_TYPES: continue
+            images.add(TypedBytesIO(attachment.content_type, BytesIO(await attachment.read())))
+
         return images
 
-    async def getImagesFromLinks(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
-        images: set[tuple[str, BytesIO]] = set()
+    async def getImagesFromLinks(this, msg: discord.Message) -> set[TypedBytesIO]:
+        images: set[TypedBytesIO] = set()
         for match in re.finditer(URL_PATTERN, msg.content):
             url = match.group(0)
             response = await this.client.netClient.downloadFile(url, mimeTypes=IMAGE_CONTENT_TYPES)
@@ -71,8 +74,8 @@ class Chroma(commands.Cog):
 
         return images
 
-    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
-        images: set[tuple[str, BytesIO]] = set()
+    async def getImagesFromEmbeds(this, msg: discord.Message) -> set[TypedBytesIO]:
+        images: set[TypedBytesIO] = set()
         if len(msg.embeds) > 0:
             for embed in msg.embeds:
                 if embed.image:
@@ -87,8 +90,8 @@ class Chroma(commands.Cog):
 
         return images
 
-    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[tuple[str, BytesIO]]:
-        images: set[tuple[str, BytesIO]] = set()
+    async def getCustomEmojisFromMessage(this, msg: discord.Message) -> set[TypedBytesIO]:
+        images: set[TypedBytesIO] = set()
 
         for match in re.finditer(EMOJI_PATTERN, msg.content):
             emojiId = match.group(1)
@@ -109,7 +112,7 @@ class Chroma(commands.Cog):
         if ctx.interaction:
             await ctx.interaction.response.send_message("Slash version isn't implemented yet. Please, use the prefixed version instead.", ephemeral=True)
 
-        if not CHROMA_EXEC_FILE.is_file():
+        if not CHROMA_EXEC_FILE:
             await ctx.reply("This feature is disabled.")
             return
 
@@ -127,13 +130,13 @@ class Chroma(commands.Cog):
             return
 
         await this.COMMAND_LOCK.acquire()
-        imagesToProcess: set[tuple[str, BytesIO]] = set()
+        imagesToProcess: set[TypedBytesIO] = set()
 
         if ctx.message.attachments:
             imagesToProcess.update(await this.getImageAttachmentsFromMessage(ctx.message))
             imagesToProcess.update(await this.getCustomEmojisFromMessage(ctx.message))
             imagesToProcess.update(await this.getImagesFromLinks(ctx.message))
-        if ctx.message.reference:
+        if ctx.message.reference and ctx.message.reference.message_id:
             orig = await ctx.message.channel.fetch_message(ctx.message.reference.message_id)
             imagesToProcess.update(await this.getImageAttachmentsFromMessage(orig))
             imagesToProcess.update(await this.getImagesFromEmbeds(orig))
@@ -148,7 +151,7 @@ class Chroma(commands.Cog):
         TEMP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         for i, image in enumerate(imagesToProcess):
             currentImgPath: Path = TEMP_IMAGES_DIR / f"{i}.bmp"
-            pic = Image.open(image[1])
+            pic = Image.open(image.content)
             pic.convert("RGBA").save(currentImgPath)
             tasks.add(this.runChroma(currentImgPath, colorspace, modifications))
 

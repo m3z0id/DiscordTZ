@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from dtypes import MariaDBConfig, UInt8
 from dtypes import UInt64
 from shared import DB_FILE
 
-
+log = logging.getLogger(__name__)
 class DataDatabase:
     sqlite: SQLiteSource
     mdb: MDBSource
@@ -73,14 +74,17 @@ class DataDatabase:
         async with this.sqlite.getConn() as conn:
             cur = await conn.execute(sqliteQuery, (timezone, str(uuid)))
             await conn.commit()
+            log.info("SQLite: %d", cur.rowcount)
             result |= cur.rowcount != 0
 
         try:
             async with this.mdb.getConn() as conn, conn.cursor() as cur:
                 await cur.execute(mdbQuery, (timezone, str(uuid)))
                 await conn.commit()
+                log.info("MDB: %d", cur.rowcount)
                 result |= cur.rowcount != 0 << 1
         except AttributeError as e:
+            log.error(f"Attribute error: {e!s}")
             pass
 
         return UInt8(result)
@@ -102,9 +106,12 @@ class DataDatabase:
     async def getUUIDFromUserId(this, userId: UInt64) -> Optional[UUID]:
         sqliteQuery = "SELECT uuid from timezones WHERE user = ?"
 
-        async with this.sqlite.getConn() as conn:
-            res = await (await conn.execute(sqliteQuery, (userId(),))).fetchone()
-            return UUID(str(res[0])) if res and hasattr(res, "__getitem__") else None
+        try:
+            async with this.sqlite.getConn() as conn:
+                res = await (await conn.execute(sqliteQuery, (userId(),))).fetchone()
+                return UUID(str(res[0])) if res and hasattr(res, "__getitem__") else None
+        except ValueError:
+            return None
 
     async def getUserIdFromUUID(this, uuid: UUID) -> Optional[UInt64]:
         sqliteQuery = "SELECT user from timezones WHERE uuid = ?"

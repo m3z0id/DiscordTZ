@@ -8,7 +8,7 @@ import discord
 
 from server.requests import SimpleRequest, PingRequest, TimezoneFromIPRequest, UserIdUUIDLinkPost
 from shared import Helpers, MAX_DATA_EMBED_LEN
-from dtypes import PacketFlags, ErrorCode
+from dtypes import PacketFlags, ErrorCode, ValidProtocol
 
 if TYPE_CHECKING:
     from modules import TZBot
@@ -31,7 +31,7 @@ class ServerLogger:
         fileSendList: list[discord.File] = []
 
         lock = "🔒" if request.client.flags & PacketFlags.AESGCM else ""
-        warning = "⚠️" if request.city and (request.response and request.response.code == ErrorCode.BAD_GEOLOC.code) else ""
+        warning = "⚠️" if request.response and request.response.code == ErrorCode.BAD_GEOLOC.code else ""
         if warning:
             request.response = None
 
@@ -58,7 +58,7 @@ class ServerLogger:
 
 
         packetName: str = request.packetNameStringRepr()
-        protocol: str = request.protocol
+        protocol: ValidProtocol = request.client.getProtocolStringRepr()
         source: str = f"{warning} {await Helpers.getCountryOrHost(request)} {warning}".strip()
 
         flags: list[str] = [flag.name for flag in PacketFlags if request.client.flags & flag and flag.name is not (None or 0)]

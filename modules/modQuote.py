@@ -7,7 +7,7 @@ from discord import app_commands
 
 from modules import TZBot
 from shared import IMAGE_CONTENT_TYPES, QUOTE_DEFAULT_FONT_SIZE, QUOTE_SMALLEST_FONT_SIZE, FONT_FILE, \
-    QUOTE_BOUNDING_BOX
+    QUOTE_BOUNDING_BOX, TChecker
 
 log = logging.getLogger(__name__)
 
@@ -96,18 +96,26 @@ async def renderAuthor(text: str) -> Image.Image:
 
 @app_commands.context_menu(name="Quote Message")
 async def quote(ctx: discord.Interaction, msg: discord.Message) -> None:
+    tzBot = TChecker.expectTZBot(ctx.client)
+
+    if not msg.author.avatar:
+        log.warning(f"{ctx.user.name} doesn't have avatar!")
+        embed = await tzBot.getFail(description="There's an issue. Please, try again later.", user=ctx.user)
+        await ctx.response.send_message(embed=embed, ephemeral=True)
+        return
+
     authorPfpUrl = msg.author.avatar.url
     authorPfpUrl = authorPfpUrl.replace(".gif", ".webp")
 
     await ctx.response.defer()
-    if not (pfp := await ctx.client.downloadFile(authorPfpUrl, IMAGE_CONTENT_TYPES)):
+    if not (pfp := await tzBot.netClient.downloadFile(authorPfpUrl, mimeTypes=IMAGE_CONTENT_TYPES)):
         log.error("Failed to download user's profile picture!")
         await ctx.followup.send("**[i]** There was an error with your command execution.")
         return
 
     base = Image.new("RGBA", (2048, 1024), color=(0, 0, 0, 255))
 
-    pfpImage = Image.open(BytesIO(pfp[1])).convert("RGBA")
+    pfpImage = Image.open(pfp.content).convert("RGBA")
     pfpImage = pfpImage.resize((1024, 1024), resample=Image.Resampling.NEAREST)
     gradient = await generateLinearGradient(1024, 1024, (0, 0, 0, 0), (0, 0, 0, 255))
     expanded = Image.new("RGBA", (2048, 1024), (0, 0, 0, 0))

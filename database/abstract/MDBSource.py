@@ -1,12 +1,9 @@
-import asyncio
 import logging
 import warnings
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import aiomysql
-import pymysql
-from aiomysql.utils import _PoolContextManager
 
 from dtypes import MariaDBConfig
 
@@ -39,5 +36,5 @@ class MDBSource:
             try:
                 for statement in statements:
                     await cur.execute(statement)
-            except pymysql.OperationalError as e:
+            except aiomysql.OperationalError as e:
                 warnings.warn(f"Failed to execute query: {e!s}")

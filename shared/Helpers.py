@@ -1,62 +1,82 @@
 import asyncio
-import gzip
-import json
 import logging
 import os
 import secrets
 import string
+import sys
 import tarfile
 import tempfile
 import time
-import zlib
 from io import BytesIO
 from pathlib import Path
 from tarfile import TarFile
-from typing import ParamSpec, TypeVar, Optional
+from typing import Optional, TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 import discord
 import msgpack
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
-from msgpack import ExtraData, FormatError, StackError
 
-from dtypes import UInt64
+from dtypes import UInt64, FileAccessType, UInt32, TimezoneRepr
 from shared import MAGICK_EXEC_FILE, BMPGEN_EXEC_FILE, HOSTS_PATTERN, HOSTS_FILE, HOSTNAME_FILE
 
-P = ParamSpec("P")
-R = TypeVar("R")
+if TYPE_CHECKING:
+    from server.requests.AbstractRequests import SimpleRequest
+    from modules import TZBot
 
 log = logging.getLogger(__name__)
 
 class Helpers:
     @staticmethod
-    async def getHosts() -> Optional[dict[str, str]]:
+    def isFileAccessible(path: Path, flags: FileAccessType) -> bool:
+        return path.is_file() and os.access(path, flags)
+
+    @staticmethod
+    def isFileR(path: Path) -> bool:
+        return Helpers.isFileAccessible(path, FileAccessType.R_OK)
+
+    @staticmethod
+    def isFileRW(path: Path) -> bool:
+        return Helpers.isFileAccessible(path, FileAccessType.R_OK | FileAccessType.W_OK)
+
+    @staticmethod
+    def isFileRX(path: Path) -> bool:
+        return Helpers.isFileAccessible(path, FileAccessType.R_OK | FileAccessType.X_OK)
+
+    @staticmethod
+    def addDirToPath(path: Path) -> None:
+        if not path.is_dir(): raise ValueError("Path must be a directory!")
+        sys.path.insert(0, str(path))
+
+    @staticmethod
+    async def getHosts() -> dict[str, str]:
         try:
             with HOSTS_FILE.open("r") as f:
                 content = f.read()
         except FileNotFoundError:
             log.fatal("Hosts file not found.")
-            return None
+            return {}
         except PermissionError:
             log.fatal("Permission denied when trying to read /etc/hosts.")
-            return None
+            return {}
 
         return dict(HOSTS_PATTERN.findall(content))
 
     @staticmethod
-    async def getCountryOrHost(request: "SimpleRequest") -> str:
-        hosts: Optional[dict[str, str]] = await Helpers.getHosts()
-
-        if request.city:
-            return request.city.country.iso_code
+    async def getCountryOrHost(request: SimpleRequest) -> str:
+        hosts: dict[str, str] = await Helpers.getHosts()
 
         if request.client.ip.is_loopback:
             with HOSTNAME_FILE.open("r") as f:
                 return f.read().capitalize()
 
-        if not hosts:
-            return "Unknown"
+        if host := hosts.get(str(request.client.ip)):
+            return host
 
-        return hosts.get(str(request.client.ip), "Local").capitalize()
+        if isoCode := request.country.country.iso_code:
+            return isoCode
+
+        return "Unknown"
 
     @staticmethod
     def generateRandomNum(maximum: int, minimum: int = 0) -> int:
@@ -71,7 +91,7 @@ class Helpers:
 
     @staticmethod
     async def generateImage(r: str, g: str, b: str) -> Optional[BytesIO]:
-        if not BMPGEN_EXEC_FILE.is_file() or not MAGICK_EXEC_FILE.is_file():
+        if not (BMPGEN_EXEC_FILE and MAGICK_EXEC_FILE):
             log.error("BMPGen or ImageMagick is not present!")
             return None
 
@@ -79,7 +99,7 @@ class Helpers:
             tempPath = Path(tempDir)
             
             bmpGen = await asyncio.create_subprocess_exec(
-                BMPGEN_EXEC_FILE.absolute(), "-r", f"{r}", "-g", f"{g}", "-b", f"{b}",
+                BMPGEN_EXEC_FILE, "-r", f"{r}", "-g", f"{g}", "-b", f"{b}",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 cwd=tempPath
             )
@@ -90,7 +110,7 @@ class Helpers:
                 return None
 
             magick = await asyncio.create_subprocess_exec(
-                MAGICK_EXEC_FILE.absolute(),
+                MAGICK_EXEC_FILE,
                 "output.bmp",
                 "-define",
                 "png:compression-level=9",
@@ -108,7 +128,7 @@ class Helpers:
                 return None
 
             outputPng = tempPath / "output.png"
-            if outputPng.exists():
+            if Helpers.isFileR(outputPng):
                 with outputPng.open("rb") as f:
                     return BytesIO(f.read())
             
@@ -166,31 +186,59 @@ class Helpers:
         return iv + cipher.encrypt(iv, msg, additional)
 
     @staticmethod
-    def unGzip(msg: bytes) -> Optional[bytes]:
-        try:
-            return gzip.decompress(msg)
-        except zlib.error as e:
-            log.error(f"Error while unzipping payload: {e!s}")
-            return None
+    def msgpackToJson(msg: bytes) -> Optional[dict]:
+        return msgpack.unpackb(msg, raw=False)
 
     @staticmethod
-    def compressGzip(msg: bytes) -> bytes:
-        return gzip.compress(msg)
-
-    @staticmethod
-    def msgpackToJson(msg: bytes) -> Optional[bytes]:
-        try:
-            obj = msgpack.unpackb(msg, raw=False)
-            return json.dumps(obj).encode()
-        except (ExtraData, FormatError, StackError, ValueError) as e:
-            log.error(f"Error while unpacking from MSGPack: {e!s}")
-            return None
-
-    @staticmethod
-    def jsonToMsgpack(msg: bytes) -> bytes:
-        obj = json.loads(msg.decode())
+    def jsonToMsgpack(obj: dict) -> bytes:
         return msgpack.packb(obj)
 
+    @staticmethod
+    def patchPidFile(rootDir: Path) -> None:
+        pidFile = rootDir / "pid"
+
+        if not Helpers.isFileAccessible(pidFile, FileAccessType.W_OK):
+            raise PermissionError(f"The PID file {pidFile} does not exist or is unwritable.")
+
+        with pidFile.open("w") as f:
+            f.write(str(os.getpid()))
+
+    @staticmethod
+    def hasUnderlyingDisable(obj: Any) -> bool:
+        return hasattr(obj, "_underlying") and hasattr(obj._underlying, "disable") and isinstance(obj._underlying.disable, bool)
+
+class TChecker:
+    @staticmethod
+    def expectUUID(data: Any) -> UUID:
+        if not isinstance(data, str):
+            raise ValueError("Data must a string.")
+
+        return UUID(data)
+
+    @staticmethod
+    def expectUInt64(data: Any) -> UInt64:
+        if not isinstance(data, int):
+            raise ValueError("Data must be an integer.")
+
+        return UInt64.boundsChecked(data)
+
+    @staticmethod
+    def expectUInt32(data: Any) -> UInt32:
+        if not isinstance(data, int):
+            raise ValueError("Data must be an integer.")
+
+        return UInt32.boundsChecked(data)
+
+    @staticmethod
+    def expectTimezone(data: Any) -> TimezoneRepr:
+        return TimezoneRepr.fromString(data)
+
+    @staticmethod
+    def expectTZBot(botClient: discord.Client) -> TZBot:
+        if not isinstance(botClient, TZBot):
+            raise ValueError("The botClient is not a TZBot!")
+
+        return cast(TZBot, botClient)
 
 def isOwner(ctx: discord.Interaction) -> bool:
-    return ctx.client.isOwner(UInt64(ctx.user.id))
+    return TChecker.expectTZBot(ctx.client).isOwner(UInt64(ctx.user.id))

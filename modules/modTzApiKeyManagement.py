@@ -6,9 +6,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dtypes import Disablable, UInt64
+from dtypes import UInt64
 from modules import TZBot
 from server.APIKey import APIPermissions, APIKey
+from shared import Helpers
 
 log = logging.getLogger(__name__)
 
@@ -23,11 +24,11 @@ class TZUI(discord.ui.LayoutView):
 
     async def disable(this, ctx: Optional[discord.Interaction] = None) -> None:
         for child in this.walk_children():
-            if isinstance(child, Disablable):
+            if Helpers.hasUnderlyingDisable(child):
                 child._underlying.disabled = True
         this.stop()
 
-        if ctx:
+        if ctx and ctx.message:
             await ctx.message.edit(view=this)
 
     def checkIfOwner(this, receivedId: UInt64) -> bool:
@@ -132,7 +133,7 @@ class DecisionActionRow(discord.ui.View):
 
     async def disable(this, ctx: Optional[discord.Interaction] = None) -> None:
         for child in this.walk_children():
-            if isinstance(child, Disablable):
+            if Helpers.hasUnderlyingDisable(child):
                 child._underlying.disabled = True
         this.stop()
 
@@ -195,9 +196,10 @@ class TZAPIRequestUI(TZUI):
     async def buttonCallback(this, ctx: discord.Interaction) -> None:
         if not this.checkIfOwner(UInt64(ctx.user.id)):
             await ctx.response.send_message("This is not your UI!")
-            log.log(f"{ctx.user.name} tried to mess with {(await ctx.client.fetch_user(this.ownerId())).name}'s UI.")
+            log.warning(f"{ctx.user.name} tried to mess with {(await ctx.client.fetch_user(this.ownerId())).name}'s UI.")
             return
 
+        if ctx.data is None: return
         match ctx.data.get("custom_id", None):
             case "CANCEL":
                 await this.disable()

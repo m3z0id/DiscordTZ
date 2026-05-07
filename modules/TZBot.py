@@ -3,7 +3,9 @@ import contextlib
 import copy
 import datetime
 import logging
-from typing import Final, Optional, cast
+import os
+from pathlib import Path
+from typing import Final, Optional, cast, Union
 from uuid import UUID
 
 import discord
@@ -20,13 +22,15 @@ from modules.modHelp import Help
 from server.APIServer import APIServer
 from server.ServerLogger import ServerLogger
 from shared import CONFIG_FILE, GEO_IP_DB_FILE, SUCCESS, FAIL, MODULES_DIR, SORRY_PATTERN, \
-    ROMANIA_PATTERN, MOD_BLACKLIST_FILE, GeoIP
+    ROMANIA_PATTERN, MOD_BLACKLIST_FILE, GeoIP, Helpers, EXECS_DIR
 from shared.NetClient import NetClient
 
 log = logging.getLogger(__name__)
 
 class TZBot(commands.Bot):
-    loadedModules: list[str] = []
+    rootDir: Path
+
+    loadedModules: set[str] = []
     loadedCommands: list[Command] = []
 
     API_SERVER_TASK: asyncio.Task
@@ -35,9 +39,12 @@ class TZBot(commands.Bot):
 
     syncOverride: bool = False
 
-    def __init__(this, **kwargs) -> None:
+    def __init__(this, rootDir: Path, **kwargs) -> None:
         super().__init__(**kwargs)
 
+        this.rootDir = rootDir
+        if not Helpers.isFileRW(CONFIG_FILE):
+            raise FileNotFoundError(f"{CONFIG_FILE} not found. Can't start without it!")
         with CONFIG_FILE.open("r") as f:
             this.config: Config = Config.schema().loads(f.read())
 
@@ -52,20 +59,20 @@ class TZBot(commands.Bot):
         this.API_SERVER = APIServer(this)
 
     # Command Response
-    async def getSuccess(this, *, description: Optional[str] = None, user: Optional[discord.User] = None) -> discord.Embed:
+    async def getSuccess(this, *, description: Optional[str] = None, user: Optional[Union[discord.User, discord.Member]] = None) -> discord.Embed:
         successCpy = copy.deepcopy(SUCCESS)
         successCpy.timestamp = datetime.datetime.now()
-        if user:
+        if user and user.avatar:
             successCpy.set_footer(text=user.name, icon_url=user.avatar.url)
         if description:
             successCpy.description = description
 
         return successCpy
 
-    async def getFail(this, *, description: Optional[str] = None, user: Optional[discord.User] = None) -> discord.Embed:
+    async def getFail(this, *, description: Optional[str] = None, user: Optional[Union[discord.User, discord.Member]] = None) -> discord.Embed:
         failCpy = copy.deepcopy(FAIL)
         failCpy.timestamp = datetime.datetime.now()
-        if user:
+        if user and user.avatar:
             failCpy.set_footer(text=user.name, icon_url=user.avatar.url)
         if description:
             failCpy.description = description
@@ -73,7 +80,11 @@ class TZBot(commands.Bot):
         return failCpy
 
     # WSS shit
-    async def startRunning(this, *, apiOnly: bool = False) -> None:
+    async def startRunning(this, *, apiOnly: bool = False, pidFile: bool = True) -> None:
+        log.info(f"Current PID is {os.getpid()}")
+        Helpers.addDirToPath(EXECS_DIR)
+
+        if pidFile: Helpers.patchPidFile(this.rootDir)
         this.geoIP = await GeoIP.create(this, GEO_IP_DB_FILE)
         if apiOnly:
             await this.API_PACKET_LOGGER.setLoggingEnabled(False)
@@ -131,24 +142,24 @@ class TZBot(commands.Bot):
         return this.isOwner(UInt64(user.id))
 
     # Modules shit
-    def getAvailableModules(this, *, exemptBlacklisted: bool = False) -> list[str]:
-        modules = [file.stem[3:] for file in MODULES_DIR.glob("mod*.py")]
+    def getAvailableModules(this, *, exemptBlacklisted: bool = False) -> set[str]:
+        modules = {file.stem[3:] for file in MODULES_DIR.glob("mod*.py")}
         if exemptBlacklisted:
-            return [module for module in modules if not this.modBlacklist.isBlacklisted(module)]
+            return {module for module in modules if not this.modBlacklist.isBlacklisted(module)}
 
         return modules
 
-    def getLoadedModules(this) -> list[str]:
+    def getLoadedModules(this) -> set[str]:
         return this.loadedModules
 
-    def getUnloadedModules(this) -> list[str]:
-        return [module for module in this.getAvailableModules() if module not in this.loadedModules]
+    def getUnloadedModules(this) -> set[str]:
+        return {module for module in this.getAvailableModules() if module not in this.loadedModules}
 
     async def _refreshHelp(this) -> None:
         this.helpCog = cast(Help, this.get_cog("Help"))
         await this.helpCog.refreshCommandList()
 
-    async def unloadModules(this, modules: list[str]) -> None:
+    async def unloadModules(this, modules: set[str]) -> None:
         for module in modules:
             if module not in this.getLoadedModules():
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
@@ -163,14 +174,14 @@ class TZBot(commands.Bot):
         log.info(f"Module {", ".join(modules)} unloaded!")
         await this._refreshHelp()
 
-    async def loadModules(this, modules: list[str]) -> None:
+    async def loadModules(this, modules: set[str]) -> None:
         for module in modules:
             if module not in this.getUnloadedModules():
                 raise ExtensionAlreadyLoaded(f"Module {module} is loaded")
 
             try:
                 await this.load_extension(f"modules.mod{module}")
-                this.loadedModules.append(module)
+                this.loadedModules.add(module)
             except (ExtensionNotFound, ExtensionAlreadyLoaded, NoEntryPointError, ExtensionFailed) as e:
                 log.error(f"Failed to load module {module}: {e!s}")
 
@@ -178,7 +189,7 @@ class TZBot(commands.Bot):
         log.info(f"Modules {", ".join(modules)} loaded!")
         await this._refreshHelp()
 
-    async def reloadModules(this, modules: list[str]) -> None:
+    async def reloadModules(this, modules: set[str]) -> None:
         for module in modules:
             if module not in this.getLoadedModules():
                 raise ExtensionNotLoaded(f"Module {module} is not loaded")
@@ -203,9 +214,12 @@ class TZBot(commands.Bot):
         with contextlib.suppress(KeyError):
             this.linkCodes.pop(code)
 
-    # Fun stuff
+    async def isLinking(this, uuid: UUID) -> bool:
+        return uuid in [val[0] for val in this.linkCodes.values()]
+
     async def on_message(this, message: discord.Message) -> None:
         await this.process_commands(message)
+
         if message.author.id == this.ownerId():
             # Canada
             if bool(SORRY_PATTERN.search(message.content)):

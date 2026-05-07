@@ -8,7 +8,6 @@ docs/
 GeoLite2-City.mmdb
 uv.lock
 config.json
-packetsender.py
 IfFormatter.py
 .tzhistory
 timezones.sqlite

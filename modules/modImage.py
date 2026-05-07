@@ -17,12 +17,12 @@ class ImageGen(commands.Cog):
     def __init__(this, client: TZBot) -> None:
         this.client = client
 
-        if not BMPGEN_EXEC_FILE.is_file():
+        if not BMPGEN_EXEC_FILE:
             log.warning(f"BMPGen executable not found at {BMPGEN_EXEC_FILE}")
-        if not MAGICK_EXEC_FILE.is_file():
+        if not MAGICK_EXEC_FILE:
             log.warning(f"ImageMagick executable not found at {MAGICK_EXEC_FILE}")
 
-        if not COLORLIST_FILE.is_file():
+        if not Helpers.isFileRW(COLORLIST_FILE):
             this.colorSet = set()
             COLORLIST_FILE.touch(exist_ok=True)
         else:
@@ -51,7 +51,7 @@ class ImageGen(commands.Cog):
     @app_commands.command(name="color", description="Generate a random unique (or not unique) color! Uses crypto random")
     @commands.cooldown(1, 3, commands.BucketType.user)
     async def color(this, ctx: discord.Interaction) -> None:
-        if not (BMPGEN_EXEC_FILE.is_file() and MAGICK_EXEC_FILE.is_file()):
+        if not (BMPGEN_EXEC_FILE and MAGICK_EXEC_FILE):
             await ctx.response.send_message("This feature is disabled.", ephemeral=True)
             return
 

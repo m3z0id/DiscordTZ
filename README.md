@@ -2,11 +2,11 @@
 
 ## TZBot API Documentation
 
-The DiscordTZ API Server operates over both TCP and UDP protocols. It uses a custom binary header for packet framing, followed by a payload that can be JSON or MsgPack, optionally compressed and/or encrypted.
+The DiscordTZ API Server operates over the UDP protocol. It uses a custom binary header for packet framing, followed by a payload that can be JSON or MsgPack, optionally compressed and/or encrypted.
 
 ### Connection Details
 
-*   **Protocols**: TCP and UDP
+*   **Protocols**: UDP (TCP is for an optional honeypot)
 *   **Port**: Defined in server configuration (default varies).
 *   **Endianness**: Big-Endian (`>`) for all binary headers.
 
@@ -14,7 +14,7 @@ The DiscordTZ API Server operates over both TCP and UDP protocols. It uses a cus
 
 ### Packet Structure
 
-#### Request Header (Client -> Server)
+#### Request Header (Client → Server)
 The request header is **7 bytes** long.
 
 | Offset | Size | Type     | Description                                                       |
@@ -47,20 +47,17 @@ The `Flags` byte determines how the payload is encoded. Flags can be combined.
 |:-----------|:----------------|:----------------------------------------------------------------------------|
 | `AES`      | `0x01` (1 << 0) | Payload is encrypted using AES-256-GCM. Header is verified using AAD.       |
 | `CHACHA20` | `0x02` (1 << 1) | Payload is encrypted using ChaCha20-Poly1305. Header is verified using AAD. |
-| `GUNZIP`   | `0x04` (1 << 2) | Payload is Gzip compressed.                                                 |
-| `MSGPACK`  | `0x08` (1 << 4) | Payload is MsgPack encoded. If not set, payload is JSON.                    |
+| `MSGPACK`  | `0x08` (1 << 3) | Payload is MsgPack encoded. If not set, payload is JSON.                    |
 
 **Processing Order (Sending):**
 1. Encode data (JSON or MsgPack).
-2. Compress (Gzip) if flag set.
-3. Encrypt (AES-256-GCM xor ChaCha20-Poly1305) if flag set.
-4. Prepend Header.
+2. Encrypt (AES-256-GCM xor ChaCha20-Poly1305) if flag set.
+3. Prepend Header.
 
 **Processing Order (Receiving):**
 1. Parse Header.
 2. Decrypt (AES-256-GCM xor ChaCha20-Poly1305) if flag set.
-3. Decompress (Gzip) if flag set.
-4. Decode (JSON or MsgPack).
+3. Decode (JSON or MsgPack).
 
 ---
 

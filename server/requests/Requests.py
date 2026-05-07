@@ -1,18 +1,18 @@
 import asyncio
 import logging
-from ipaddress import IPv4Address, AddressValueError
-from typing import override, Optional
+from ipaddress import IPv4Address
+from typing import override
 from uuid import UUID
 
 import geoip2.errors
 import tzlocal
 
+from dtypes import ErrorCode, TimezoneRepr
 from modules import TZBot
 from server import APIPermissions
 from server.protocol import Client
 from server.requests import autoRespond, UserIdRequest, APIRequest, UUIDRequest, SimpleRequest
-from shared import Helpers, TIMEZONE_CHECK_LIST
-from dtypes import ErrorCode
+from shared import Helpers, TChecker
 
 log = logging.getLogger(__name__)
 
@@ -37,17 +37,10 @@ class TimezoneFromUserIdRequest(UserIdRequest):
 
 
 class TimezoneFromIPRequest(APIRequest):
-    askedIp: Optional[IPv4Address]
+    askedIp: IPv4Address
 
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
         super().__init__(client, headers, data, tzBot, APIPermissions.IP_ADDRESS)
-
-        try:
-            this.askedIp = IPv4Address(str(this.data.get("ip")))
-            this.data["ip"] = "<redacted>"
-        except AddressValueError:
-            this.askedIp = None
-
 
     @override
     def packetNameStringRepr(this) -> str:
@@ -60,24 +53,26 @@ class TimezoneFromIPRequest(APIRequest):
 
         if not this.response:
             try:
-                if not this.askedIp:
-                    this.response = ErrorCode.BAD_REQUEST
-                else:
-                    if this.askedIp.is_private:
-                        if this.client.ip.is_private:
-                            this.response = ErrorCode.OK
-                            this.response.message = tzlocal.get_localzone().key
-                        else:
-                            requestCity = this.tzBot.maxMindDb.city(str(this.client.ip))
-                            this.response = ErrorCode.OK
-                            this.response.message = requestCity.location.time_zone
-
+                this.askedIp = IPv4Address(TChecker.expectUInt32(this.data.get("ip"))())
+                if this.askedIp.is_private:
+                    if this.client.ip.is_private:
+                        this.response = ErrorCode.OK
+                        this.response.message = tzlocal.get_localzone().key
                     else:
-                        requestCity = this.tzBot.maxMindDb.city(str(this.askedIp))
+                        requestCity = this.tzBot.geoIP.country(str(this.client.ip))
                         this.response = ErrorCode.OK
                         this.response.message = requestCity.location.time_zone
-            except geoip2.errors.AddressNotFoundError:
-                this.response = ErrorCode.NOT_FOUND
+
+                else:
+                    requestCity = this.tzBot.geoIP.country(str(this.askedIp))
+                    this.response = ErrorCode.OK
+                    this.response.message = requestCity.location.time_zone
+
+            except (geoip2.errors.AddressNotFoundError, ValueError):
+                this.response = ErrorCode.BAD_REQUEST
+
+            finally:
+                if this.askedIp: this.data["ip"] = "<redacted>"
 
 
 class PingRequest(SimpleRequest):
@@ -98,17 +93,11 @@ class PingRequest(SimpleRequest):
 
 class UserIdUUIDLinkPost(APIRequest):
     code: str = ""
-    uuid: Optional[UUID]
-    timezone: Optional[str]
+    uuid: UUID
+    timezone: TimezoneRepr
 
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
         super().__init__(client, headers, data, tzBot, APIPermissions.UUID_POST)
-        this.timezone = this.data.get("timezone")
-        try:
-            this.uuid = UUID(this.data.get("uuid"))
-        except ValueError:
-            this.uuid = None
-
 
     @override
     def packetNameStringRepr(this) -> str:
@@ -120,38 +109,33 @@ class UserIdUUIDLinkPost(APIRequest):
         await super().process()
 
         if not this.response:
-            if not this.uuid:
+            try:
+                this.uuid = TChecker.expectUUID(this.data.get("uuid"))
+                this.timezone = TChecker.expectTimezone(this.data.get("timezone"))
+
+                if await this.tzBot.db.getUserIdFromUUID(this.uuid) or await this.tzBot.isLinking(this.uuid):
+                    this.response = ErrorCode.CONFLICT
+                    this.response.message = "UUID already registered"
+
+                else:
+                    this.code = Helpers.generateCharSequence(6)
+
+                    this.tzBot.linkCodes.update({this.code: (this.uuid, this.timezone.stringify())})
+                    asyncio.create_task(this.tzBot.removeCode(15, this.code))
+
+                    this.response = ErrorCode.OK
+                    this.response.message = this.code
+
+            except ValueError:
                 this.response = ErrorCode.BAD_REQUEST
-                this.response.message = "Invalid UUID"
-
-            if this.timezone not in TIMEZONE_CHECK_LIST:
-                this.response = ErrorCode.NOT_FOUND
-
-            elif await this.tzBot.db.getUserIdFromUUID(this.uuid) or this.uuid in [val[0] for val in this.tzBot.linkCodes.values()]:
-                this.response = ErrorCode.CONFLICT
-                this.response.message = "UUID already registered"
-
-            else:
-                this.code = Helpers.generateCharSequence(6)
-
-                this.tzBot.linkCodes.update({this.code: (this.uuid, this.timezone)})
-                asyncio.create_task(this.tzBot.removeCode(15, this.code))
-
-                this.response = ErrorCode.OK
-                this.response.message = this.code
 
 
 class TimezoneAdjustRequest(APIRequest):
-    uuid: Optional[UUID]
-    timezone: Optional[str]
+    uuid: UUID
+    timezone: TimezoneRepr
 
     def __init__(this, client: Client, headers: dict, data: dict, tzBot: TZBot) -> None:
         super().__init__(client, headers, data, tzBot, APIPermissions.UUID_POST)
-        this.timezone = this.data.get("timezone")
-        try:
-            this.uuid = UUID(this.data.get("uuid"))
-        except ValueError:
-            this.uuid = None
 
     @override
     def packetNameStringRepr(this) -> str:
@@ -163,19 +147,20 @@ class TimezoneAdjustRequest(APIRequest):
         await super().process()
 
         if not this.response:
-            if not this.uuid:
+            try:
+                this.uuid = TChecker.expectUUID(this.data.get("uuid"))
+                this.timezone = TChecker.expectTimezone(this.data.get("timezone"))
+
+                if not await this.tzBot.db.getUserIdFromUUID(this.uuid):
+                    this.response = ErrorCode.NOT_FOUND
+
+                else:
+                    this.response = ErrorCode.INTERNAL_SERVER_ERROR
+                    if await this.tzBot.db.setTimezoneUUID(this.uuid, this.timezone.stringify()):
+                        this.response = ErrorCode.OK
+
+            except ValueError:
                 this.response = ErrorCode.BAD_REQUEST
-                this.response.message = "Invalid UUID"
-
-            if this.timezone not in TIMEZONE_CHECK_LIST or not await this.tzBot.db.getUserIdFromUUID(this.uuid):
-                this.response = ErrorCode.NOT_FOUND
-
-            else:
-                this.response = ErrorCode.INTERNAL_SERVER_ERROR
-                if result := await this.tzBot.db.setTimezoneUUID(this.uuid, this.timezone):
-                    this.response = ErrorCode.OK
-
-                log.info(f"DB: {result}")
 
 
 class TimezoneFromUUIDRequest(UUIDRequest):

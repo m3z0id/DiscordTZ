@@ -11,8 +11,7 @@ from discord.ext import commands
 
 from dtypes import Profile, PresenceType, ActivityType
 from modules import TZBot
-from shared import PROFILE_FILE, ACTIVITY_TYPES, PRESENCE_TYPES, isOwner
-
+from shared import PROFILE_FILE, ACTIVITY_TYPES, PRESENCE_TYPES, isOwner, Helpers
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ class BotProfile(commands.GroupCog, group_name="profile", description="[Bot Owne
     permanentProfile: Profile
 
     def __init__(this, client: TZBot) -> None:
-        if not PROFILE_FILE.exists():
+        if not Helpers.isFileRW(PROFILE_FILE):
             log.warning(f"{PROFILE_FILE.name} doesn't exist! Falling back to defaults...")
 
             this.currentProfile = Profile()

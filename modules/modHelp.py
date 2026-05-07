@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, cast
 
 import discord
 from discord import app_commands
@@ -74,10 +74,10 @@ class Help(commands.Cog):
         log.info(f"Generated help for {len(this.commandList)} commands!")
 
     async def commandAutocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        return [app_commands.Choice(name=name, value=name)
+        return cast(list[app_commands.Choice[str]], [app_commands.Choice(name=name, value=name)
                 for name, cmd in self.commandList.items()
                 if name.lower().startswith(current.lower()) \
-                and cmd.canBeExecutedBy(interaction.permissions)][:MAX_SHOWABLE_RESULTS]
+                and cmd.canBeExecutedBy(interaction.permissions)][:MAX_SHOWABLE_RESULTS])
 
     @app_commands.command(name="help", description="Display a list of all available commands or detailed info for a specific command.")
     @app_commands.describe(command="Command you want to show documentation for.")
@@ -90,18 +90,16 @@ class Help(commands.Cog):
         if not command:  # Show generic command list
             embed.colour = discord.Color.green()
             commandListStr = ""
-            for command_name, command in this.commandList.items():
-                if not command.canBeExecutedBy(ctx.permissions):
-                    continue
-
-                commandListStr += f"- /{command_name}\n"
+            for cmdName, cmd in this.commandList.items():
+                if not cmd.canBeExecutedBy(ctx.permissions): continue
+                commandListStr += f"- /{cmdName}\n"
 
             embed.title = "Command List"
             embed.description = commandListStr
 
         elif command in this.commandList.keys() and this.commandList[command].canBeExecutedBy(ctx.permissions):
             requestedCmd = this.commandList[command]
-            embed.title = f"Documentation for </{requestedCmd.name}:{requestedCmd.commandId}>"
+            embed.title = f"Documentation for {requestedCmd.getMention()}"
             embed.colour = discord.Color.green()
 
             embed.add_field(name="Command Information", inline=False, value="\n".join([

@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Optional, ClassVar
+from typing import Optional, ClassVar, cast
 
 import discord
 import pytz
@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from dtypes.Types import UInt64
 from modules import TZBot
-from shared import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_LIST, MAX_TIMESTAMP, isOwner
+from shared import MAX_SHOWABLE_RESULTS, TIMEZONES, TIMEZONE_CHECK_SET, MAX_TIMESTAMP, isOwner
 
 log = logging.getLogger(__name__)
 
@@ -22,12 +22,12 @@ class TzCommands(commands.Cog):
         this.client = client
 
     async def getTimezones(this, ctx: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        result: list[app_commands.Choice[str]] = []
+        result = []
 
-        cityMatches = [app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}") for tz in TIMEZONES if
-                       str(tz.get("city", "")).lower().startswith(current.lower())]
-        areaMatches = [app_commands.Choice(name=f"{tz['area']}/{tz['city']}", value=f"{tz['area']}/{tz['city']}") for tz in TIMEZONES if
-                       str(tz.get("area", "")).lower().startswith(current.lower())]
+        cityMatches = cast(list[app_commands.Choice[str]], [app_commands.Choice(name=tz.stringify(), value=tz.stringify()) for tz in TIMEZONES if
+                       tz.city.lower().startswith(current.lower())])
+        areaMatches = cast(list[app_commands.Choice[str]], [app_commands.Choice(name=tz.stringify(), value=tz.stringify()) for tz in TIMEZONES if
+                       tz.area.lower().startswith(current.lower())])
 
         if len(cityMatches) > MAX_SHOWABLE_RESULTS:
             return cityMatches[:MAX_SHOWABLE_RESULTS]
@@ -41,7 +41,7 @@ class TzCommands(commands.Cog):
     @app_commands.describe(timezone="The timezone you are in.")
     @app_commands.autocomplete(timezone=getTimezones)
     async def tzSet(this, ctx: discord.Interaction, timezone: str) -> None:
-        if timezone not in TIMEZONE_CHECK_LIST:
+        if timezone not in TIMEZONE_CHECK_SET:
             log.error(f"{ctx.user.name} tried to set their timezone to {timezone}.")
             embed = await this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
@@ -67,7 +67,15 @@ class TzCommands(commands.Cog):
     @app_commands.command(name="now", description="Shows person's time.")
     @app_commands.describe(person="Whose time to display?")
     async def now(this, ctx: discord.Interaction, person: Optional[discord.Member]) -> None:
+        if not isinstance(ctx.user, discord.Member):
+            embed = await this.client.getFail(description=f"This command is runnable only inside servers!", user=ctx.user)
+            await ctx.response.send_message(embed=embed, ephemeral=True)
+            return
+
         if not person: person = ctx.user
+        if not person:
+            raise ValueError(f"{person=} is null!")
+
         if not (zoneName := await this.client.db.getTimezoneFromUserId(UInt64(person.id))):
             embed = await this.client.getFail(description=f"{person.mention} hasn't registered with me yet!", user=ctx.user)
             await ctx.response.send_message(embed=embed, ephemeral=True)
@@ -91,13 +99,12 @@ class TzCommands(commands.Cog):
         )
 
         await ctx.response.send_message(embed=embed)
-        return
 
     @app_commands.command(name="tznow", description="Shows the time in a certain timezone.")
     @app_commands.describe(timezone="Timezone to show the current time for.")
     @app_commands.autocomplete(timezone=getTimezones)
     async def nowTz(this, ctx: discord.Interaction, timezone: str) -> None:
-        if timezone not in TIMEZONE_CHECK_LIST:
+        if timezone not in TIMEZONE_CHECK_SET:
             log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
             fail = this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
             await ctx.response.send_message(embed=fail, ephemeral=True)
@@ -130,7 +137,7 @@ class TzCommands(commands.Cog):
         timezone="Timezone you want to show the time at. Defaults to UTC."
     )
     async def unixFrom(this, ctx: discord.Interaction, timestamp: app_commands.Range[int, 0, MAX_TIMESTAMP], timezone: Optional[str] = None) -> None:
-        if timezone and timezone not in TIMEZONE_CHECK_LIST:
+        if timezone and timezone not in TIMEZONE_CHECK_SET:
             log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
             fail = this.client.getFail(
                 description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.",
@@ -179,7 +186,7 @@ class TzCommands(commands.Cog):
                      second: app_commands.Range[int, 0, 59] = datetime.datetime.now().second,
                      timezone: Optional[str] = None) -> None:
 
-        if timezone and timezone not in TIMEZONE_CHECK_LIST:
+        if timezone and timezone not in TIMEZONE_CHECK_SET:
             log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
             fail = this.client.getFail(
                 description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.",
@@ -203,8 +210,8 @@ class TzCommands(commands.Cog):
             title=f"Date to Unix Timestamp conversion (as {formattedOffset})",
             color=discord.Color.green(),
             description=requestedTime.strftime("\n".join([
-                f"Inputted date: <t:{int(requestedTime.timestamp())}:F>",
-                f"Result: `{int(requestedTime.timestamp())}`"
+                f"Inputted date: <t:{int(requestedTime.finalTimestamp())}:F>",
+                f"Result: `{int(requestedTime.finalTimestamp())}`"
             ]))
         )
 
@@ -219,7 +226,7 @@ class TzCommands(commands.Cog):
     )
     @app_commands.check(isOwner)
     async def adminAdd(this, ctx: discord.Interaction, user: discord.Member, timezone: str) -> None:
-        if timezone not in TIMEZONE_CHECK_LIST:
+        if timezone not in TIMEZONE_CHECK_SET:
             log.error(f"{ctx.user.name} entered invalid timezone: '{timezone}'.")
             fail = this.client.getFail(description="Invalid timezone. Use [this table](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for reference.", user=ctx.user)
             await ctx.response.send_message(embed=fail, ephemeral=True)

@@ -37,7 +37,7 @@ class GeoIP:
 
 
     def _shouldDownload(this) -> bool:
-        if not this.dbPath.is_file(): return True
+        if not Helpers.isFileRW(this.dbPath): return True
         if not (age := Helpers.getFileAge(this.dbPath)) or age > DAY_SECONDS: return True
 
         try:
@@ -49,17 +49,18 @@ class GeoIP:
 
     async def _download(this) -> None:
         maxmindConfig = this.tzBot.config.maxmind
-        contentType, archive = await this.tzBot.netClient.downloadFile(GEO_IP_URL, mimeTypes=["application/gzip", "application/xml"], auth=BasicAuth(str(maxmindConfig.accountId), maxmindConfig.token))
+        try:
+            contentType, archive = await this.tzBot.netClient.downloadFile(GEO_IP_URL, mimeTypes={"application/gzip", "application/xml"}, auth=BasicAuth(str(maxmindConfig.accountId), maxmindConfig.token))
+        except TypeError:
+            log.fatal("Failed to fetch GeoLite2!")
+            return
 
-        if not (mmdb := Helpers.getFileFromTar(archive, "/GeoLite2-City.mmdb")):
+        if not (mmdb := Helpers.getFileFromTar(archive, "/GeoLite2-Country.mmdb")):
             log.fatal("Failed to fetch GeoLite2!")
             return
 
         with this.dbPath.open("wb") as f:
             f.write(mmdb)
 
-    def city(this, ip: IPv4Address) -> Optional[geoip2.database.City]:
-        try:
-            return this._maxMindDb.city(str(ip))
-        except geoip2.errors.AddressNotFoundError:
-            return None
+    def country(this, ip: IPv4Address) -> geoip2.database.Country:
+        return this._maxMindDb.country(str(ip))

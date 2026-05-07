@@ -1,29 +1,34 @@
 import asyncio
 import contextlib
-from asyncio import Queue, DatagramTransport
-from typing import Final, Optional
+from asyncio import DatagramTransport
+from typing import Final, TYPE_CHECKING, override
 
+from dtypes import PacketFlags, ValidProtocol
 from server.protocol import Client
-from dtypes import PacketFlags
 
+if TYPE_CHECKING:
+    from server.APIServer import APIServer
 
 class UDPClient(Client):
-    def __init__(this, transport: asyncio.DatagramTransport, ipAddress: tuple[str, int], aesKey: bytes, server: "APIServer", flags: PacketFlags = 0) -> None:
+    def __init__(this, transport: asyncio.DatagramTransport, ipAddress: tuple[str, int], aesKey: bytes, server: APIServer, flags: PacketFlags = PacketFlags.NONE) -> None:
         super().__init__(ipAddress, aesKey, flags, server)
         this.transport: asyncio.DatagramTransport = transport
 
-    async def send(this, data: bytes) -> None:
-        finalData = await this._applyFlags(data)
+    async def send(this, data: dict) -> None:
+        finalData = this._applyFlags(data)
         this.transport.sendto(finalData, (str(this.ip), this.port()))
+
+    @override
+    def getProtocolStringRepr(this) -> ValidProtocol:
+        return "UDP"
 
 
 class UDPProtocol(asyncio.DatagramProtocol):
     _STOP_EVENT: Final[asyncio.Event]
 
-    def __init__(this, server: "APIServer") -> None:  # noqa: ANN001
+    def __init__(this, server: APIServer) -> None:  # noqa: ANN001
         this.server = server
-        this.transport: Optional[DatagramTransport] = None
-        this.requestQueue: Queue[tuple[bytes, UDPClient]] = Queue()
+        this.transport: DatagramTransport = None
 
         this._STOP_EVENT = asyncio.Event()
 
@@ -40,6 +45,5 @@ class UDPProtocol(asyncio.DatagramProtocol):
 
     def close(this):
         this.transport.close()
-        this.requestQueue.empty()
         with contextlib.suppress(asyncio.CancelledError, TypeError):
             this._STOP_EVENT.set()

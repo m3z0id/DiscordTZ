@@ -53,13 +53,13 @@ class ModuleManagement(commands.GroupCog, group_name="modules", group_descriptio
 
         try:
             await ctx.response.defer()
-            await this.client.loadModules([modulename])
+            await this.client.loadModules({modulename})
             log.info(f"{ctx.user.name} loaded {modulename}!")
 
             embed = await this.client.getSuccess(description=f"Module {modulename} loaded!", user=ctx.user)
             await ctx.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
-            log.fatal(f"Error occured: {e!s}")
+            log.fatal(f"Error occurred: {e!s}")
 
     @app_commands.command(name="unload", description="Unloads a specific module.")
     @app_commands.autocomplete(modulename=getLoadedModules)
@@ -73,7 +73,7 @@ class ModuleManagement(commands.GroupCog, group_name="modules", group_descriptio
             return
 
         await ctx.response.defer()
-        await this.client.unloadModules([modulename])
+        await this.client.unloadModules({modulename})
         log.info(f"{ctx.user.name} unloaded {modulename}!")
 
         embed = await this.client.getSuccess(description=f"Module {modulename} unloaded!", user=ctx.user)
@@ -92,7 +92,7 @@ class ModuleManagement(commands.GroupCog, group_name="modules", group_descriptio
             return
 
         await ctx.response.defer()
-        await this.client.reloadModules([modulename])
+        await this.client.reloadModules({modulename})
         log.info(f"{ctx.user.name} reloaded {modulename}!")
 
         embed = await this.client.getSuccess(description=f"Module {modulename} reloaded!", user=ctx.user)

@@ -35,11 +35,10 @@ class TzLink(commands.Cog):
             return
 
         entry: tuple[UUID, str] = this.client.linkCodes.pop(code)
+        await this.client.db.assignUUIDToUserId(entry[0], UInt64(ctx.user.id), entry[1])
+
         embed = await this.client.getSuccess(description=f"Your Discord account has been successfully linked with `{entry[0]}`!", user=ctx.user)
         await ctx.response.send_message(embed=embed, ephemeral=True)
-
-        await this.client.db.assignUUIDToUserId(entry[0], UInt64(ctx.user.id), entry[1])
-        return
 
     @app_commands.command(name="unlink", description="Unlinks your Minecraft account.")
     async def unlink(this, ctx: discord.Interaction) -> None:
