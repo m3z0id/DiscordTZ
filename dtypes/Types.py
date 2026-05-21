@@ -193,7 +193,7 @@ class ErrorCode(metaclass=DeepCopier):
     CONFLICT = Response(409, "Conflict")
     BAD_GEOLOC = Response(-1, "Bad Geolocation")
 
-class PacketFlags(IntEnum):
+class PacketFlags(IntFlag):
     NONE = 0
     AESGCM = 1 << 0
     CHACHAPOLY = 1 << 1
