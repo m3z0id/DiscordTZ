@@ -11,7 +11,7 @@ from typing import Final, Optional, TYPE_CHECKING
 
 from cryptography.exceptions import InvalidTag
 
-from dtypes import APIPayload, PacketFlags, UInt8
+from dtypes import APIPayload, PacketFlags, UInt8, UInt16
 from server.protocol import Client, TCPClient, UDPProtocol
 from server.requests import SimpleRequest, PingRequest, TimezoneFromUserIdRequest, TimezoneFromIPRequest, \
     UserIdUUIDLinkPost, \
@@ -87,7 +87,8 @@ class APIServer:
         if tLetter != ord("t") or zLetter != ord("z") or len(payload) != 4 or payload[0] < 7 or payload[-1] + payload[0] > len(msg):
             return None
 
-        return APIPayload(*payload)
+        # Explicit otherwise it's always int
+        return APIPayload(UInt8(payload[0]), UInt8(payload[1]), PacketFlags(payload[2]), UInt16(payload[3]))
 
     async def processRequest(this, msg: bytes, client: Client) -> None:
         payload: Optional[APIPayload] = await this.parsePacketInfo(msg)
