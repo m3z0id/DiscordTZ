@@ -143,7 +143,8 @@ class Helpers:
     @staticmethod
     def getFileAge(path: Path) -> Optional[int]:
         """ Returns the file age in seconds. """
-        if path.is_file(): return None
+        if not path.is_file():
+            return None
         currentTime = time.time()
         return int(currentTime - path.stat().st_ctime)
 
