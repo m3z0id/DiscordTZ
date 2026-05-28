@@ -61,7 +61,7 @@ class ServerLogger:
         protocol: ValidProtocol = request.client.getProtocolStringRepr()
         source: str = f"{warning} {await Helpers.getCountryOrHost(request)} {warning}".strip()
 
-        flags: list[str] = [flag.name for flag in PacketFlags if request.client.flags & flag and flag.name is not (None or 0)]
+        flags: list[str] = [flag.name for flag in PacketFlags if request.client.flags & flag and flag.name not in (None, 0)]
 
         description = "\n".join([
             f"**Packet**: {packetName}",

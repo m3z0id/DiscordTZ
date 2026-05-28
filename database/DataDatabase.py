@@ -62,7 +62,7 @@ class DataDatabase:
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(mdbQuery, (userId(), timezone))
             await conn.commit()
-            result |= cur.rowcount != 0 << 1
+            result |= (cur.rowcount != 0) << 1
 
         return UInt8(0b11)
 
@@ -82,7 +82,7 @@ class DataDatabase:
                 await cur.execute(mdbQuery, (timezone, str(uuid)))
                 await conn.commit()
                 log.info("MDB: %d", cur.rowcount)
-                result |= cur.rowcount != 0 << 1
+                result |= (cur.rowcount != 0) << 1
         except AttributeError as e:
             log.error(f"Attribute error: {e!s}")
             pass
@@ -133,7 +133,7 @@ class DataDatabase:
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(mdbQuery, (userId(), str(uuid), timezone, str(uuid)))
             await conn.commit()
-            result |= cur.rowcount != 0 << 1
+            result |= (cur.rowcount != 0) << 1
 
         return result == 0b11
 
@@ -149,6 +149,6 @@ class DataDatabase:
         async with this.mdb.getConn() as conn, conn.cursor() as cur:
             await cur.execute(query.replace("?", "%s"), (userId(),))
             await conn.commit()
-            result |= cur.rowcount != 0 << 1
+            result |= (cur.rowcount != 0) << 1
 
         return result == 0b11

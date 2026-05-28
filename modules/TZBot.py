@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 class TZBot(commands.Bot):
     rootDir: Path
 
-    loadedModules: set[str] = []
+    loadedModules: set[str] = set()
     loadedCommands: list[Command] = []
 
     API_SERVER_TASK: asyncio.Task

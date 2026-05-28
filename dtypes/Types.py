@@ -87,7 +87,7 @@ class LimitedInt:
 
     @classmethod
     def boundsChecked(cls, value: int) -> LimitedInt:
-        if 0 > value >= cls.MASK:
+        if value < 0 or value > cls.MASK:
             raise ValueError("Integer failed bounds check!")
 
         return cls(value)
